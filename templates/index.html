@@ -88,6 +88,10 @@
     .chart-wrapper { position: relative; height: 220px; }
     .popular-tickers .badge { cursor: pointer; font-size: .85rem; padding: .4rem .8rem; }
     .popular-tickers .badge:hover { opacity: .85; }
+    .ticker-btn { cursor: pointer; font-size: .78rem; padding: .25rem .55rem; margin: .15rem .1rem; transition: opacity .15s, transform .1s; border: 1px solid rgba(255,255,255,.12) !important; }
+    .ticker-btn:hover { opacity: .85; transform: translateY(-1px); }
+    .sector-label { display: block; font-size: .68rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; margin-bottom: .3rem; opacity: .85; }
+    .sector-block { padding: .4rem .5rem; border-radius: 6px; background: rgba(255,255,255,.02); }
     #results { display: none; }
     .section-header { color: var(--bvc-green); font-size: .9rem; font-weight: 700; letter-spacing: .08em; }
   </style>
@@ -123,15 +127,118 @@
       </button>
     </div>
     <div class="popular-tickers">
-      <small class="text-secondary me-2">Valeurs populaires :</small>
-      <span class="badge bg-secondary me-1" onclick="quickSearch('ATW')">ATW</span>
-      <span class="badge bg-secondary me-1" onclick="quickSearch('IAM')">IAM</span>
-      <span class="badge bg-secondary me-1" onclick="quickSearch('BCP')">BCP</span>
-      <span class="badge bg-secondary me-1" onclick="quickSearch('CIH')">CIH</span>
-      <span class="badge bg-secondary me-1" onclick="quickSearch('SMI')">SMI</span>
-      <span class="badge bg-secondary me-1" onclick="quickSearch('HPS')">HPS</span>
-      <span class="badge bg-secondary me-1" onclick="quickSearch('TMA')">TMA</span>
-      <span class="badge bg-secondary me-1" onclick="quickSearch('MNG')">MNG</span>
+      <div class="d-flex align-items-center justify-content-between mb-2">
+        <small class="text-secondary">Valeurs populaires :</small>
+        <button class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:.75rem;border-color:rgba(255,255,255,.2)"
+                type="button" data-bs-toggle="collapse" data-bs-target="#allTickers" aria-expanded="false">
+          <i class="bi bi-grid-3x3-gap me-1"></i>Toutes les valeurs BVC <i class="bi bi-chevron-down ms-1" id="tickerChevron"></i>
+        </button>
+      </div>
+      <!-- Favoris rapides -->
+      <div class="mb-1">
+        <span class="badge bg-secondary me-1 mb-1" onclick="quickSearch('ATW')">ATW</span>
+        <span class="badge bg-secondary me-1 mb-1" onclick="quickSearch('IAM')">IAM</span>
+        <span class="badge bg-secondary me-1 mb-1" onclick="quickSearch('BCP')">BCP</span>
+        <span class="badge bg-secondary me-1 mb-1" onclick="quickSearch('SMI')">SMI</span>
+        <span class="badge bg-secondary me-1 mb-1" onclick="quickSearch('HPS')">HPS</span>
+        <span class="badge bg-secondary me-1 mb-1" onclick="quickSearch('TMA')">TMA</span>
+        <span class="badge bg-secondary me-1 mb-1" onclick="quickSearch('MNG')">MNG</span>
+        <span class="badge bg-secondary me-1 mb-1" onclick="quickSearch('LES')">LES</span>
+      </div>
+      <!-- Toutes les valeurs par secteur -->
+      <div class="collapse" id="allTickers">
+        <div class="mt-2 p-3 rounded" style="background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.07);font-size:.82rem;">
+          <div class="row g-2">
+
+            <div class="col-12 col-md-6">
+              <div class="sector-block mb-2">
+                <span class="sector-label" style="color:#4fc3f7">BANQUES</span>
+                <span class="badge ticker-btn" style="background:#1565c0" onclick="quickSearch('ATW')">ATW</span>
+                <span class="badge ticker-btn" style="background:#1565c0" onclick="quickSearch('BCP')">BCP</span>
+                <span class="badge ticker-btn" style="background:#1565c0" onclick="quickSearch('CIH')">CIH</span>
+                <span class="badge ticker-btn" style="background:#1565c0" onclick="quickSearch('BOA')">BOA</span>
+                <span class="badge ticker-btn" style="background:#1565c0" onclick="quickSearch('CDM')">CDM</span>
+                <span class="badge ticker-btn" style="background:#1565c0" onclick="quickSearch('BMCI')">BMCI</span>
+              </div>
+              <div class="sector-block mb-2">
+                <span class="sector-label" style="color:#80deea">ASSURANCES &amp; FIN.</span>
+                <span class="badge ticker-btn" style="background:#00695c" onclick="quickSearch('WAA')">WAA</span>
+                <span class="badge ticker-btn" style="background:#00695c" onclick="quickSearch('ACM')">ACM</span>
+                <span class="badge ticker-btn" style="background:#00695c" onclick="quickSearch('SLF')">SLF</span>
+                <span class="badge ticker-btn" style="background:#00695c" onclick="quickSearch('AFMA')">AFMA</span>
+              </div>
+              <div class="sector-block mb-2">
+                <span class="sector-label" style="color:#b2dfdb">TÉLÉCOM &amp; TECH</span>
+                <span class="badge ticker-btn" style="background:#00796b" onclick="quickSearch('IAM')">IAM</span>
+                <span class="badge ticker-btn" style="background:#00796b" onclick="quickSearch('M2M')">M2M</span>
+                <span class="badge ticker-btn" style="background:#00796b" onclick="quickSearch('HPS')">HPS</span>
+                <span class="badge ticker-btn" style="background:#00796b" onclick="quickSearch('DISWAY')">DISWAY</span>
+                <span class="badge ticker-btn" style="background:#00796b" onclick="quickSearch('INVOLYS')">INVOLYS</span>
+              </div>
+              <div class="sector-block mb-2">
+                <span class="sector-label" style="color:#ffcc80">ÉNERGIE</span>
+                <span class="badge ticker-btn" style="background:#e65100" onclick="quickSearch('TMA')">TMA</span>
+                <span class="badge ticker-btn" style="background:#e65100" onclick="quickSearch('GAZ')">GAZ</span>
+                <span class="badge ticker-btn" style="background:#e65100" onclick="quickSearch('TQM')">TQM</span>
+                <span class="badge ticker-btn" style="background:#e65100" onclick="quickSearch('MOX')">MOX</span>
+              </div>
+              <div class="sector-block mb-2">
+                <span class="sector-label" style="color:#ffe082">MINES</span>
+                <span class="badge ticker-btn" style="background:#f57f17" onclick="quickSearch('SMI')">SMI</span>
+                <span class="badge ticker-btn" style="background:#f57f17" onclick="quickSearch('MNG')">MNG</span>
+                <span class="badge ticker-btn" style="background:#f57f17" onclick="quickSearch('MSA')">MSA</span>
+              </div>
+            </div>
+
+            <div class="col-12 col-md-6">
+              <div class="sector-block mb-2">
+                <span class="sector-label" style="color:#a5d6a7">AGROALIMENTAIRE</span>
+                <span class="badge ticker-btn" style="background:#2e7d32" onclick="quickSearch('SBM')">SBM</span>
+                <span class="badge ticker-btn" style="background:#2e7d32" onclick="quickSearch('OUL')">OUL</span>
+                <span class="badge ticker-btn" style="background:#2e7d32" onclick="quickSearch('FBR')">FBR</span>
+                <span class="badge ticker-btn" style="background:#2e7d32" onclick="quickSearch('LES')">LES</span>
+                <span class="badge ticker-btn" style="background:#2e7d32" onclick="quickSearch('CSR')">CSR</span>
+                <span class="badge ticker-btn" style="background:#2e7d32" onclick="quickSearch('MUT')">MUT</span>
+              </div>
+              <div class="sector-block mb-2">
+                <span class="sector-label" style="color:#ce93d8">IMMOBILIER</span>
+                <span class="badge ticker-btn" style="background:#6a1b9a" onclick="quickSearch('DHO')">DHO</span>
+                <span class="badge ticker-btn" style="background:#6a1b9a" onclick="quickSearch('AGC')">AGC</span>
+                <span class="badge ticker-btn" style="background:#6a1b9a" onclick="quickSearch('RDS')">RDS</span>
+              </div>
+              <div class="sector-block mb-2">
+                <span class="sector-label" style="color:#ef9a9a">CIMENT &amp; BTP</span>
+                <span class="badge ticker-btn" style="background:#b71c1c" onclick="quickSearch('CMR')">CMR</span>
+                <span class="badge ticker-btn" style="background:#b71c1c" onclick="quickSearch('LHM')">LHM</span>
+                <span class="badge ticker-btn" style="background:#b71c1c" onclick="quickSearch('CMA')">CMA</span>
+                <span class="badge ticker-btn" style="background:#b71c1c" onclick="quickSearch('STROC')">STROC</span>
+              </div>
+              <div class="sector-block mb-2">
+                <span class="sector-label" style="color:#bcaaa4">INDUSTRIE</span>
+                <span class="badge ticker-btn" style="background:#4e342e" onclick="quickSearch('SID')">SID</span>
+                <span class="badge ticker-btn" style="background:#4e342e" onclick="quickSearch('CCAR')">CCAR</span>
+                <span class="badge ticker-btn" style="background:#4e342e" onclick="quickSearch('SNEP')">SNEP</span>
+                <span class="badge ticker-btn" style="background:#4e342e" onclick="quickSearch('PRO')">PRO</span>
+              </div>
+              <div class="sector-block mb-2">
+                <span class="sector-label" style="color:#b0bec5">AUTOMOBILE &amp; DISTRIB.</span>
+                <span class="badge ticker-btn" style="background:#37474f" onclick="quickSearch('SAH')">SAH</span>
+                <span class="badge ticker-btn" style="background:#37474f" onclick="quickSearch('ALM')">ALM</span>
+                <span class="badge ticker-btn" style="background:#37474f" onclick="quickSearch('ADH')">ADH</span>
+                <span class="badge ticker-btn" style="background:#37474f" onclick="quickSearch('LBV')">LBV</span>
+              </div>
+              <div class="sector-block mb-2">
+                <span class="sector-label" style="color:#cfd8dc">TRANSPORT &amp; SERVICES</span>
+                <span class="badge ticker-btn" style="background:#263238" onclick="quickSearch('CTM')">CTM</span>
+                <span class="badge ticker-btn" style="background:#263238" onclick="quickSearch('RIS')">RIS</span>
+                <span class="badge ticker-btn" style="background:#263238" onclick="quickSearch('LYDEC')">LYDEC</span>
+                <span class="badge ticker-btn" style="background:#263238" onclick="quickSearch('TIMAR')">TIMAR</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -210,6 +317,14 @@ function quickSearch(t) {
   document.getElementById('tickerInput').value = t;
   doAnalyze();
 }
+
+// Chevron rotation on collapse toggle
+document.getElementById('allTickers').addEventListener('show.bs.collapse', () => {
+  document.getElementById('tickerChevron').className = 'bi bi-chevron-up ms-1';
+});
+document.getElementById('allTickers').addEventListener('hide.bs.collapse', () => {
+  document.getElementById('tickerChevron').className = 'bi bi-chevron-down ms-1';
+});
 
 document.getElementById('analyzeBtn').addEventListener('click', doAnalyze);
 document.getElementById('tickerInput').addEventListener('keydown', e => { if (e.key === 'Enter') doAnalyze(); });

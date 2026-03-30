@@ -7,27 +7,65 @@ import anthropic
 app = Flask(__name__)
 
 BVC_TICKERS = {
-    "ATW": "ATW.CS", "IAM": "IAM.CS", "BCP": "BCP.CS", "CIH": "CIH.CS",
-    "BOA": "BOA.CS", "CMR": "CMR.CS", "HPS": "HPS.CS", "SMI": "SMI.CS",
-    "TMA": "TMA.CS", "GAZ": "GAZ.CS", "MNG": "MNG.CS", "WAA": "WAA.CS",
-    "CDM": "CDM.CS", "SBM": "SBM.CS", "FBR": "FBR.CS", "ADH": "ADH.CS",
-    "LHM": "LHM.CS", "ACM": "ACM.CS", "AGC": "AGC.CS", "DHO": "DHO.CS",
-    "SAH": "SAH.CS", "CTM": "CTM.CS", "MSA": "MSA.CS", "TQM": "TQM.CS",
-    "RIS": "RIS.CS", "OUL": "OUL.CS", "M2M": "M2M.CS", "ALM": "ALM.CS",
+    # Banques
+    "ATW": "ATW.CS", "BCP": "BCP.CS", "CIH": "CIH.CS", "BOA": "BOA.CS",
+    "CDM": "CDM.CS", "BMCI": "BMCI.CS",
+    # Assurances & Financières
+    "WAA": "WAA.CS", "ACM": "ACM.CS", "SLF": "SLF.CS", "AFMA": "AFMA.CS",
+    # Télécoms & Technologies
+    "IAM": "IAM.CS", "M2M": "M2M.CS", "HPS": "HPS.CS",
+    "DISWAY": "DIS.CS", "INVOLYS": "INVOL.CS",
+    # Mines
+    "SMI": "SMI.CS", "MNG": "MNG.CS", "MSA": "MSA.CS",
+    # Ciment & BTP
+    "CMR": "CMR.CS", "LHM": "LHM.CS", "CMA": "CMA.CS", "STROC": "STROC.CS",
+    # Énergie
+    "TMA": "TMA.CS", "GAZ": "GAZ.CS", "TQM": "TQM.CS", "MOX": "MOX.CS",
+    # Agroalimentaire & Boissons
+    "SBM": "SBM.CS", "OUL": "OUL.CS", "FBR": "FBR.CS",
+    "LES": "LES.CS", "CSR": "CSR.CS", "MUT": "MUT.CS",
+    # Distribution
+    "LBV": "LBV.CS",
+    # Automobile
+    "SAH": "SAH.CS", "ALM": "ALM.CS", "ADH": "ADH.CS",
+    # Immobilier
+    "DHO": "DHO.CS", "AGC": "AGC.CS", "RDS": "RDS.CS",
+    # Industrie
+    "SID": "SID.CS", "CCAR": "CCAR.CS", "SNEP": "SNEP.CS", "PRO": "PRO.CS",
+    # Transport & Services publics
+    "CTM": "CTM.CS", "RIS": "RIS.CS", "LYDEC": "LYDEC.CS", "TIMAR": "TIMAR.CS",
 }
 
 SECTORS = {
+    # Banques
     "ATW": "Banques", "BCP": "Banques", "CIH": "Banques",
-    "BOA": "Banques", "CDM": "Banques",
+    "BOA": "Banques", "CDM": "Banques", "BMCI": "Banques",
+    # Assurances & Financières
+    "WAA": "Assurances", "ACM": "Assurances", "SLF": "Services financiers", "AFMA": "Services financiers",
+    # Télécoms & Technologies
     "IAM": "Télécommunications", "M2M": "Technologies",
-    "CMR": "Matériaux de construction", "LHM": "Matériaux de construction",
-    "HPS": "Technologies", "TQM": "Services",
-    "SAH": "Automobile", "ALM": "Automobile",
+    "HPS": "Technologies", "DISWAY": "Technologies", "INVOLYS": "Technologies",
+    # Mines
     "SMI": "Mines", "MNG": "Mines", "MSA": "Mines",
-    "TMA": "Énergie", "GAZ": "Énergie",
-    "WAA": "Assurances", "ACM": "Assurances", "RIS": "Assurances",
-    "FBR": "Agroalimentaire", "SBM": "Agroalimentaire", "OUL": "Agroalimentaire",
-    "DHO": "Distribution", "CTM": "Transport", "AGC": "Immobilier",
+    # Ciment & BTP
+    "CMR": "Matériaux de construction", "LHM": "Matériaux de construction",
+    "CMA": "Matériaux de construction", "STROC": "BTP",
+    # Énergie
+    "TMA": "Énergie", "GAZ": "Énergie", "TQM": "Énergie", "MOX": "Énergie",
+    # Agroalimentaire
+    "SBM": "Agroalimentaire", "OUL": "Agroalimentaire", "FBR": "Agroalimentaire",
+    "LES": "Agroalimentaire", "CSR": "Agroalimentaire", "MUT": "Agroalimentaire",
+    # Distribution
+    "LBV": "Distribution",
+    # Automobile
+    "SAH": "Automobile", "ALM": "Automobile", "ADH": "Automobile",
+    # Immobilier
+    "DHO": "Immobilier", "AGC": "Immobilier", "RDS": "Immobilier",
+    # Industrie
+    "SID": "Industrie", "CCAR": "Industrie", "SNEP": "Industrie", "PRO": "Pharmacie",
+    # Transport & Services
+    "CTM": "Transport", "RIS": "Tourisme & Loisirs",
+    "LYDEC": "Services publics", "TIMAR": "Logistique",
 }
 
 # Fiches sociétés — source : Bourse de Casablanca + rapports publics
