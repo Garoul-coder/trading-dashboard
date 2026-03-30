@@ -157,7 +157,7 @@ def get_stock_data(ticker):
 def generate_analysis(ticker, stock_data, sector):
     if stock_data and stock_data.get("data_available"):
         data_context = f"""
-Données de marché en temps réel :
+Données de marché disponibles (Yahoo Finance) :
 - Prix actuel      : {stock_data['current_price']} MAD
 - Variation 1 mois : {stock_data['change_1mo']:+.2f}%
 - Variation 3 mois : {stock_data['change_3mo']:+.2f}%
@@ -171,36 +171,84 @@ Données de marché en temps réel :
 - Rendement div.   : {stock_data['dividend_yield']}%
 """
     else:
-        data_context = "Données de marché en temps réel non disponibles. Basez-vous sur vos connaissances de cette société cotée à la BVC."
+        data_context = "Données de marché temps réel non disponibles. Utilise tes connaissances sur cette société cotée à la BVC et formule des hypothèses réalistes basées sur le marché marocain."
 
-    prompt = f"""Tu es un analyste financier senior expert de la Bourse de Casablanca (BVC).
-Fournis une analyse professionnelle et structurée en français pour le titre **{ticker}** (secteur : {sector}).
+    prompt = f"""Tu es un analyste financier expert des marchés émergents, spécialisé dans la Bourse de Casablanca (BVC).
+Ta mission est de produire une analyse complète, claire et professionnelle, digne d'un rapport de société de gestion marocaine (asset management / broker).
+
+Ticker analysé : **{ticker}** | Secteur : {sector}
 
 {data_context}
 
-Génère exactement les 4 sections suivantes :
+Génère l'analyse complète en respectant EXACTEMENT cette structure :
 
-## 📊 Résumé des Résultats Financiers
-Analyse les performances financières récentes : chiffre d'affaires, résultat net, marges, endettement, dividendes.
-Commente la trajectoire de croissance et les perspectives.
+## 🔎 1. Présentation de la société
+- Nom complet et activité principale
+- Positionnement sur le marché marocain
+- Principaux concurrents locaux
 
-## 📈 Signaux Momentum
-Analyse technique : RSI, MM20/MM50, momentum 1 et 3 mois, supports/résistances.
-Indique pour chaque signal : 🟢 HAUSSIER | 🟡 NEUTRE | 🔴 BAISSIER
+## 📊 2. Analyse fondamentale
 
-## 💡 Opinion d'Investissement
-Recommandation : ACHAT FORT | ACHAT | NEUTRE | VENTE | VENTE FORTE
-Prix cible 12 mois, risques principaux, profil investisseur.
+### a) Résultats financiers récents
+- Chiffre d'affaires et évolution YoY
+- Résultat net et évolution YoY
+- Marges EBITDA et nette
+- Éléments marquants
 
-## 🏭 Comparaison Sectorielle
-Compare {ticker} avec ses pairs BVC du secteur {sector} : valorisation, positionnement, catalyseurs.
+### b) Ratios clés
+- PER, ROE, Dette/EBITDA
+- Rendement du dividende
+- Valorisation vs historique (sur/sous-valorisé ?)
 
-Réponds intégralement en français."""
+### c) Analyse qualitative
+- Forces et avantages concurrentiels
+- Faiblesses
+- Risques (macro, sectoriels, spécifiques Maroc)
+- Perspectives de croissance
+
+## 📈 3. Analyse technique
+
+### a) Tendance
+- Court terme, moyen terme, long terme
+
+### b) Indicateurs techniques
+- MM20 / MM50 / MM200 : signaux et croisements
+- RSI : niveau et interprétation
+- MACD : signal haussier ou baissier
+- Volumes : accumulation ou distribution
+
+### c) Niveaux clés
+- Supports principaux
+- Résistances principales
+- Situation : breakout, consolidation ou retournement ?
+
+## ⚡ 4. Signaux de momentum
+- Accélération ou ralentissement de tendance
+- Force relative vs indice MASI
+- Signal global : 🟢 HAUSSIER | 🟡 NEUTRE | 🔴 BAISSIER
+
+## 🏭 5. Comparaison sectorielle
+- Comparer {ticker} avec 2-3 concurrents marocains du secteur {sector}
+- Croissance, rentabilité, valorisation comparées
+- Leadership ou retard sectoriel
+
+## 🧾 6. Opinion d'investissement
+- Recommandation : **ACHAT FORT** | **ACHAT** | **CONSERVER** | **ALLÉGER** | **VENTE**
+- Horizon : court / moyen / long terme
+- Prix cible à 12 mois
+- Niveau de risque : Faible | Moyen | Élevé
+- Arguments principaux (3-5 points)
+
+## 🧠 7. Résumé exécutif
+Synthèse en 5-7 lignes maximum, orientée décision, comme dans un flash note de broker.
+
+---
+Contraintes : répondre uniquement en français · être synthétique et factuel · utiliser des bullet points · si données manquantes, formuler des hypothèses réalistes basées sur le contexte marocain."""
 
     client = get_client()
     response = client.messages.create(
         model="claude-haiku-4-5",
-        max_tokens=2000,
+        max_tokens=3000,
         messages=[{"role": "user", "content": prompt}],
     )
     return response.content[0].text
