@@ -5,7 +5,12 @@ from flask import Flask, render_template, request, jsonify
 import anthropic
 
 app = Flask(__name__)
-client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+
+def get_client():
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise ValueError("ANTHROPIC_API_KEY non configurée")
+    return anthropic.Anthropic(api_key=api_key)
 
 # Mapping tickers BVC -> Yahoo Finance
 BVC_TICKERS = {
@@ -38,24 +43,33 @@ def index():
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
-    data = request.get_json()
-    ticker = data.get("ticker", "").upper().strip()
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Requête invalide"}), 400
 
-    if not ticker:
-        return jsonify({"error": "Veuillez entrer un ticker valide"}), 400
-    if len(ticker) > 10:
-        return jsonify({"error": "Ticker invalide"}), 400
+        ticker = data.get("ticker", "").upper().strip()
 
-    sector = SECTORS.get(ticker, "Secteur divers")
-    stock_data = get_stock_data(ticker)
-    analysis = generate_analysis(ticker, stock_data, sector)
+        if not ticker:
+            return jsonify({"error": "Veuillez entrer un ticker valide"}), 400
+        if len(ticker) > 10:
+            return jsonify({"error": "Ticker invalide"}), 400
 
-    return jsonify({
-        "ticker": ticker,
-        "sector": sector,
-        "stock_data": stock_data,
-        "analysis": analysis,
-    })
+        sector = SECTORS.get(ticker, "Secteur divers")
+        stock_data = get_stock_data(ticker)
+        analysis = generate_analysis(ticker, stock_data, sector)
+
+        return jsonify({
+            "ticker": ticker,
+            "sector": sector,
+            "stock_data": stock_data,
+            "analysis": analysis,
+        })
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 500
+    except Exception as e:
+        print(f"Erreur analyze: {e}")
+        return jsonify({"error": f"Erreur serveur : {str(e)}"}), 500
 
 
 def get_stock_data(ticker):
@@ -170,6 +184,7 @@ Compare {ticker} avec ses pairs du secteur {sector} à la BVC :
 
 Utilise des données chiffrées, sois factuel et professionnel. Réponds intégralement en français."""
 
+    client = get_client()
     response = client.messages.create(
         model="claude-opus-4-6",
         max_tokens=2500,
