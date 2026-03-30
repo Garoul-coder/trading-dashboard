@@ -1,16 +1,10 @@
 import os
-import json
+import math
 import yfinance as yf
 from flask import Flask, render_template, request, jsonify
 import anthropic
 
 app = Flask(__name__)
-
-def get_client():
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise ValueError("ANTHROPIC_API_KEY non configurée")
-    return anthropic.Anthropic(api_key=api_key)
 
 # Mapping tickers BVC -> Yahoo Finance
 BVC_TICKERS = {
@@ -36,6 +30,26 @@ SECTORS = {
 }
 
 
+def safe(val, decimals=2):
+    """Convert numpy/pandas scalar to a JSON-safe Python type."""
+    if val is None:
+        return None
+    try:
+        f = float(val)
+        if math.isnan(f) or math.isinf(f):
+            return None
+        return round(f, decimals)
+    except (TypeError, ValueError):
+        return None
+
+
+def get_client():
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise ValueError("Clé API Anthropic non configurée sur le serveur.")
+    return anthropic.Anthropic(api_key=api_key)
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -44,12 +58,11 @@ def index():
 @app.route("/analyze", methods=["POST"])
 def analyze():
     try:
-        data = request.get_json()
+        data = request.get_json(force=True, silent=True)
         if not data:
             return jsonify({"error": "Requête invalide"}), 400
 
-        ticker = data.get("ticker", "").upper().strip()
-
+        ticker = str(data.get("ticker", "")).upper().strip()
         if not ticker:
             return jsonify({"error": "Veuillez entrer un ticker valide"}), 400
         if len(ticker) > 10:
@@ -65,11 +78,10 @@ def analyze():
             "stock_data": stock_data,
             "analysis": analysis,
         })
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 500
+
     except Exception as e:
-        print(f"Erreur analyze: {e}")
-        return jsonify({"error": f"Erreur serveur : {str(e)}"}), 500
+        print(f"[ERROR] /analyze : {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 def get_stock_data(ticker):
@@ -77,56 +89,63 @@ def get_stock_data(ticker):
     try:
         stock = yf.Ticker(yf_ticker)
         hist = stock.history(period="6mo")
-        info = stock.info
 
         if hist.empty:
             return {"data_available": False}
 
-        close = hist["Close"]
-        current_price = close.iloc[-1]
+        info = {}
+        try:
+            info = stock.info or {}
+        except Exception:
+            pass
 
-        # Moving averages
-        ma20 = close.rolling(20).mean().iloc[-1] if len(close) >= 20 else None
-        ma50 = close.rolling(50).mean().iloc[-1] if len(close) >= 50 else None
+        close = hist["Close"]
+        current_price = float(close.iloc[-1])
+
+        ma20 = safe(close.rolling(20).mean().iloc[-1]) if len(close) >= 20 else None
+        ma50 = safe(close.rolling(50).mean().iloc[-1]) if len(close) >= 50 else None
 
         # RSI
-        delta = close.diff()
-        gain = delta.clip(lower=0).rolling(14).mean()
-        loss = -delta.clip(upper=0).rolling(14).mean()
-        rs = gain / loss
-        rsi = (100 - 100 / (1 + rs)).iloc[-1] if len(close) >= 14 else None
+        rsi = None
+        if len(close) >= 14:
+            delta = close.diff()
+            gain = delta.clip(lower=0).rolling(14).mean()
+            loss = -delta.clip(upper=0).rolling(14).mean()
+            rs = gain / loss
+            rsi = safe((100 - 100 / (1 + rs)).iloc[-1])
 
-        # Performance
-        price_1mo = close.iloc[-22] if len(close) >= 22 else close.iloc[0]
-        price_3mo = close.iloc[-66] if len(close) >= 66 else close.iloc[0]
-        change_1mo = (current_price - price_1mo) / price_1mo * 100
-        change_3mo = (current_price - price_3mo) / price_3mo * 100
+        price_1mo = float(close.iloc[-22]) if len(close) >= 22 else float(close.iloc[0])
+        price_3mo = float(close.iloc[-66]) if len(close) >= 66 else float(close.iloc[0])
+        change_1mo = safe((current_price - price_1mo) / price_1mo * 100)
+        change_3mo = safe((current_price - price_3mo) / price_3mo * 100)
 
-        # Chart data (last 90 trading days)
+        # Chart — convert everything to plain Python types
         hist_90 = hist.tail(90)
         chart_data = {
             "dates": hist_90.index.strftime("%Y-%m-%d").tolist(),
-            "prices": [round(p, 2) for p in hist_90["Close"].tolist()],
-            "volumes": hist_90["Volume"].tolist(),
+            "prices": [safe(p) for p in hist_90["Close"].tolist()],
+            "volumes": [int(v) if not math.isnan(float(v)) else 0
+                        for v in hist_90["Volume"].tolist()],
         }
 
         return {
             "data_available": True,
-            "current_price": round(current_price, 2),
-            "change_1mo": round(change_1mo, 2),
-            "change_3mo": round(change_3mo, 2),
-            "ma20": round(ma20, 2) if ma20 else None,
-            "ma50": round(ma50, 2) if ma50 else None,
-            "rsi": round(float(rsi), 2) if rsi else None,
-            "high_52w": round(info.get("fiftyTwoWeekHigh", 0), 2),
-            "low_52w": round(info.get("fiftyTwoWeekLow", 0), 2),
-            "market_cap": info.get("marketCap"),
-            "pe_ratio": round(info.get("trailingPE", 0), 2) if info.get("trailingPE") else None,
-            "dividend_yield": round(info.get("dividendYield", 0) * 100, 2) if info.get("dividendYield") else None,
+            "current_price": safe(current_price),
+            "change_1mo": change_1mo,
+            "change_3mo": change_3mo,
+            "ma20": ma20,
+            "ma50": ma50,
+            "rsi": rsi,
+            "high_52w": safe(info.get("fiftyTwoWeekHigh")),
+            "low_52w": safe(info.get("fiftyTwoWeekLow")),
+            "market_cap": int(info["marketCap"]) if info.get("marketCap") else None,
+            "pe_ratio": safe(info.get("trailingPE")),
+            "dividend_yield": safe((info.get("dividendYield") or 0) * 100),
             "chart_data": chart_data,
         }
+
     except Exception as e:
-        print(f"Erreur pour {ticker}: {e}")
+        print(f"[ERROR] get_stock_data({ticker}): {e}")
         return {"data_available": False}
 
 
@@ -154,35 +173,24 @@ Fournis une analyse professionnelle et structurée en français pour le titre **
 
 {data_context}
 
-Génère exactement les 4 sections suivantes avec ces titres exacts :
+Génère exactement les 4 sections suivantes :
 
 ## 📊 Résumé des Résultats Financiers
 Analyse les performances financières récentes : chiffre d'affaires, résultat net, marges, endettement, dividendes.
-Commente la trajectoire de croissance et les perspectives pour l'exercice en cours et le suivant.
+Commente la trajectoire de croissance et les perspectives.
 
 ## 📈 Signaux Momentum
-Analyse technique détaillée :
-- RSI : interprète le niveau (survente < 30, surachat > 70, zone neutre 30-70)
-- Moyennes mobiles : relation prix / MM20 / MM50 (croisements, tendance)
-- Momentum 1 mois et 3 mois
-- Niveau de support et résistance clés
-Pour chaque signal, indique clairement : 🟢 HAUSSIER | 🟡 NEUTRE | 🔴 BAISSIER
+Analyse technique : RSI, MM20/MM50, momentum 1 et 3 mois, supports/résistances.
+Indique pour chaque signal : 🟢 HAUSSIER | 🟡 NEUTRE | 🔴 BAISSIER
 
 ## 💡 Opinion d'Investissement
-Recommandation parmi : ⭐ ACHAT FORT | ACHAT | NEUTRE | VENTE | VENTE FORTE
-- Justification de la recommandation
-- Prix cible estimé à 12 mois
-- Principaux risques (réglementaire, macroéconomique, sectoriel)
-- Profil d'investisseur cible (court terme / long terme / revenus)
+Recommandation : ACHAT FORT | ACHAT | NEUTRE | VENTE | VENTE FORTE
+Prix cible 12 mois, risques principaux, profil investisseur.
 
 ## 🏭 Comparaison Sectorielle
-Compare {ticker} avec ses pairs du secteur {sector} à la BVC :
-- Valorisation relative (PER, Price/Book, rendement)
-- Positionnement concurrentiel et parts de marché
-- Catalyseurs sectoriels propres au Maroc
-- Conclusion : {ticker} sur-performe ou sous-performe son secteur ?
+Compare {ticker} avec ses pairs BVC du secteur {sector} : valorisation, positionnement, catalyseurs.
 
-Utilise des données chiffrées, sois factuel et professionnel. Réponds intégralement en français."""
+Réponds intégralement en français."""
 
     client = get_client()
     response = client.messages.create(
