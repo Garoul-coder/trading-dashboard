@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BVC Trading Dashboard — Analyse IA</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bvc-green: #00843D;
+      --bvc-dark: #1a1a2e;
+      --card-bg: #16213e;
+      --accent: #0f3460;
+    }
+    body {
+      background: var(--bvc-dark);
+      color: #e0e0e0;
+      font-family: 'Segoe UI', sans-serif;
+      min-height: 100vh;
+    }
+    .navbar-brand span { color: var(--bvc-green); }
+    .hero-card {
+      background: linear-gradient(135deg, var(--accent) 0%, var(--card-bg) 100%);
+      border: 1px solid rgba(0,132,61,0.3);
+      border-radius: 16px;
+    }
+    .metric-card {
+      background: var(--card-bg);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px;
+      transition: transform .2s;
+    }
+    .metric-card:hover { transform: translateY(-3px); }
+    .metric-value { font-size: 1.6rem; font-weight: 700; }
+    .metric-label { font-size: .78rem; color: #8899aa; text-transform: uppercase; letter-spacing: .05em; }
+    .positive { color: #00c853; }
+    .negative { color: #ff1744; }
+    .neutral  { color: #ffd600; }
+    .analysis-card {
+      background: var(--card-bg);
+      border: 1px solid rgba(0,132,61,0.2);
+      border-radius: 12px;
+    }
+    .analysis-card h2 { font-size: 1.1rem; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: .5rem; }
+    .analysis-content { line-height: 1.8; white-space: pre-wrap; }
+    .search-input {
+      background: rgba(255,255,255,0.07) !important;
+      border: 2px solid rgba(0,132,61,0.4) !important;
+      color: #fff !important;
+      font-size: 1.2rem;
+      border-radius: 12px 0 0 12px !important;
+    }
+    .search-input::placeholder { color: rgba(255,255,255,0.35) !important; }
+    .search-input:focus {
+      border-color: var(--bvc-green) !important;
+      box-shadow: 0 0 0 3px rgba(0,132,61,0.2) !important;
+    }
+    .btn-analyze {
+      background: var(--bvc-green);
+      border: none;
+      border-radius: 0 12px 12px 0 !important;
+      font-weight: 600;
+      letter-spacing: .05em;
+      padding: 0 2rem;
+    }
+    .btn-analyze:hover { background: #005f2c; }
+    .spinner-overlay {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(10,10,30,.8);
+      z-index: 9999;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    .spinner-overlay.active { display: flex; }
+    .ticker-badge {
+      background: var(--bvc-green);
+      font-size: 1.5rem;
+      font-weight: 800;
+      border-radius: 8px;
+      padding: .2rem .8rem;
+    }
+    .rsi-bar { height: 8px; border-radius: 4px; background: linear-gradient(to right, #2196f3, #4caf50, #ff9800, #f44336); }
+    .rsi-indicator { width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 2px solid #333; position: relative; top: -11px; transition: left .5s; }
+    .chart-wrapper { position: relative; height: 220px; }
+    .popular-tickers .badge { cursor: pointer; font-size: .85rem; padding: .4rem .8rem; }
+    .popular-tickers .badge:hover { opacity: .85; }
+    #results { display: none; }
+    .section-header { color: var(--bvc-green); font-size: .9rem; font-weight: 700; letter-spacing: .08em; }
+  </style>
+</head>
+<body>
+
+<!-- Spinner -->
+<div class="spinner-overlay" id="spinner">
+  <div class="spinner-border text-success mb-3" style="width:3.5rem;height:3.5rem;"></div>
+  <p class="text-white fw-semibold">Analyse IA en cours…</p>
+  <small class="text-secondary">Cela peut prendre 10 à 20 secondes</small>
+</div>
+
+<!-- Navbar -->
+<nav class="navbar navbar-dark px-4 py-3" style="background: rgba(0,0,0,.4); border-bottom:1px solid rgba(0,132,61,.2);">
+  <a class="navbar-brand fw-bold fs-5" href="#">
+    <i class="bi bi-graph-up-arrow me-2"></i>BVC <span>Trading</span> Dashboard
+  </a>
+  <small class="text-secondary d-none d-md-block">Analyse fondamentale &amp; technique — Bourse de Casablanca</small>
+</nav>
+
+<div class="container py-4" style="max-width:1100px;">
+
+  <!-- Search -->
+  <div class="hero-card p-4 mb-4">
+    <h1 class="fs-4 fw-bold mb-1">Analyse d'une valeur BVC</h1>
+    <p class="text-secondary mb-3" style="font-size:.9rem;">Entrez un ticker pour obtenir une analyse fondamentale + technique générée par IA en français.</p>
+    <div class="input-group mb-3">
+      <input type="text" id="tickerInput" class="form-control search-input text-uppercase"
+             placeholder="Ex : ATW, IAM, BCP, SMI…" maxlength="10" />
+      <button class="btn btn-analyze text-white" id="analyzeBtn">
+        <i class="bi bi-cpu me-1"></i> Analyser
+      </button>
+    </div>
+    <div class="popular-tickers">
+      <small class="text-secondary me-2">Valeurs populaires :</small>
+      <span class="badge bg-secondary me-1" onclick="quickSearch('ATW')">ATW</span>
+      <span class="badge bg-secondary me-1" onclick="quickSearch('IAM')">IAM</span>
+      <span class="badge bg-secondary me-1" onclick="quickSearch('BCP')">BCP</span>
+      <span class="badge bg-secondary me-1" onclick="quickSearch('CIH')">CIH</span>
+      <span class="badge bg-secondary me-1" onclick="quickSearch('SMI')">SMI</span>
+      <span class="badge bg-secondary me-1" onclick="quickSearch('HPS')">HPS</span>
+      <span class="badge bg-secondary me-1" onclick="quickSearch('TMA')">TMA</span>
+      <span class="badge bg-secondary me-1" onclick="quickSearch('MNG')">MNG</span>
+    </div>
+  </div>
+
+  <!-- Error -->
+  <div id="errorAlert" class="alert alert-danger d-none" role="alert"></div>
+
+  <!-- Results -->
+  <div id="results">
+
+    <!-- Header row -->
+    <div class="d-flex align-items-center gap-3 mb-4">
+      <span class="ticker-badge text-white" id="rTicker"></span>
+      <div>
+        <div class="fw-semibold fs-5" id="rPrice"></div>
+        <small class="text-secondary" id="rSector"></small>
+      </div>
+      <div class="ms-auto text-end">
+        <div id="rChange1mo" class="fw-bold fs-5"></div>
+        <small class="text-secondary">1 mois</small>
+      </div>
+    </div>
+
+    <!-- Metrics -->
+    <div class="row g-3 mb-4" id="metricsRow">
+      <div class="col-6 col-md-3">
+        <div class="metric-card p-3 text-center">
+          <div class="metric-label mb-1">RSI (14)</div>
+          <div class="metric-value" id="mRsi">—</div>
+          <div class="rsi-bar mt-2" id="rsiBar"></div>
+          <div class="rsi-indicator" id="rsiDot" style="left:50%"></div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="metric-card p-3 text-center">
+          <div class="metric-label mb-1">MM20 / MM50</div>
+          <div class="metric-value" id="mMa" style="font-size:1rem;"></div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="metric-card p-3 text-center">
+          <div class="metric-label mb-1">52 sem.</div>
+          <div class="metric-value" id="m52w" style="font-size:1rem;"></div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="metric-card p-3 text-center">
+          <div class="metric-label mb-1">PER / Div.</div>
+          <div class="metric-value" id="mPer" style="font-size:1rem;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Chart -->
+    <div id="chartCard" class="metric-card p-3 mb-4" style="display:none;">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <span class="section-header"><i class="bi bi-bar-chart-fill me-1"></i>HISTORIQUE DES PRIX (90 jours)</span>
+      </div>
+      <div class="chart-wrapper"><canvas id="priceChart"></canvas></div>
+    </div>
+
+    <!-- AI Analysis -->
+    <div id="analysisContainer"></div>
+
+  </div><!-- /results -->
+</div>
+
+<footer class="text-center text-secondary py-3" style="font-size:.8rem; border-top:1px solid rgba(255,255,255,.05);">
+  Propulsé par Claude Opus 4.6 (Anthropic) · Données via Yahoo Finance · Bourse de Casablanca
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+let priceChartInstance = null;
+
+function quickSearch(t) {
+  document.getElementById('tickerInput').value = t;
+  doAnalyze();
+}
+
+document.getElementById('analyzeBtn').addEventListener('click', doAnalyze);
+document.getElementById('tickerInput').addEventListener('keydown', e => { if (e.key === 'Enter') doAnalyze(); });
+
+async function doAnalyze() {
+  const ticker = document.getElementById('tickerInput').value.trim().toUpperCase();
+  if (!ticker) return;
+
+  document.getElementById('errorAlert').classList.add('d-none');
+  document.getElementById('results').style.display = 'none';
+  document.getElementById('spinner').classList.add('active');
+
+  try {
+    const res = await fetch('/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticker }),
+    });
+    const data = await res.json();
+
+    if (data.error) throw new Error(data.error);
+
+    renderResults(data);
+  } catch (err) {
+    document.getElementById('errorAlert').textContent = err.message || 'Erreur lors de l\'analyse.';
+    document.getElementById('errorAlert').classList.remove('d-none');
+  } finally {
+    document.getElementById('spinner').classList.remove('active');
+  }
+}
+
+function renderResults(data) {
+  const sd = data.stock_data;
+
+  // Header
+  document.getElementById('rTicker').textContent = data.ticker;
+  document.getElementById('rSector').textContent = data.sector;
+
+  if (sd && sd.data_available) {
+    document.getElementById('rPrice').textContent = `${sd.current_price} MAD`;
+    const ch1 = sd.change_1mo;
+    const el = document.getElementById('rChange1mo');
+    el.textContent = `${ch1 > 0 ? '+' : ''}${ch1.toFixed(2)}%`;
+    el.className = ch1 > 0 ? 'fw-bold fs-5 positive' : ch1 < 0 ? 'fw-bold fs-5 negative' : 'fw-bold fs-5 neutral';
+
+    // RSI
+    const rsi = sd.rsi;
+    if (rsi) {
+      document.getElementById('mRsi').textContent = rsi.toFixed(1);
+      document.getElementById('mRsi').className = 'metric-value ' + (rsi < 30 ? 'positive' : rsi > 70 ? 'negative' : 'neutral');
+      document.getElementById('rsiDot').style.marginLeft = `calc(${rsi}% - 7px)`;
+    }
+
+    // MA
+    document.getElementById('mMa').innerHTML =
+      `<span class="text-info">${sd.ma20 || '—'}</span> / <span class="text-warning">${sd.ma50 || '—'}</span>`;
+
+    // 52w
+    document.getElementById('m52w').innerHTML =
+      `<span class="positive">${sd.high_52w}</span> / <span class="negative">${sd.low_52w}</span>`;
+
+    // PER / Div
+    document.getElementById('mPer').innerHTML =
+      `${sd.pe_ratio || '—'} / <span class="positive">${sd.dividend_yield ? sd.dividend_yield + '%' : '—'}</span>`;
+
+    // Chart
+    if (sd.chart_data) {
+      document.getElementById('chartCard').style.display = 'block';
+      renderChart(sd.chart_data, data.ticker);
+    }
+  } else {
+    document.getElementById('rPrice').textContent = 'Données indisponibles';
+    document.getElementById('rChange1mo').textContent = '';
+    ['mRsi','mMa','m52w','mPer'].forEach(id => document.getElementById(id).textContent = '—');
+    document.getElementById('chartCard').style.display = 'none';
+  }
+
+  // Analysis — split sections by ##
+  const container = document.getElementById('analysisContainer');
+  container.innerHTML = '';
+  const sections = data.analysis.split(/(?=## )/);
+  sections.forEach(sec => {
+    if (!sec.trim()) return;
+    const lines = sec.trim().split('\n');
+    const title = lines[0].replace(/^## /, '');
+    const body = lines.slice(1).join('\n').trim();
+    const div = document.createElement('div');
+    div.className = 'analysis-card p-4 mb-3';
+    div.innerHTML = `
+      <h2 class="fw-bold mb-3">${title}</h2>
+      <div class="analysis-content">${formatAnalysis(body)}</div>`;
+    container.appendChild(div);
+  });
+
+  document.getElementById('results').style.display = 'block';
+  document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
+}
+
+function formatAnalysis(text) {
+  return text
+    .replace(/🟢 HAUSSIER/g, '<span class="badge bg-success">🟢 HAUSSIER</span>')
+    .replace(/🟡 NEUTRE/g, '<span class="badge bg-warning text-dark">🟡 NEUTRE</span>')
+    .replace(/🔴 BAISSIER/g, '<span class="badge bg-danger">🔴 BAISSIER</span>')
+    .replace(/ACHAT FORT/g, '<span class="badge bg-success fs-6">⭐ ACHAT FORT</span>')
+    .replace(/\bACHAT\b/g, '<span class="badge bg-success">ACHAT</span>')
+    .replace(/VENTE FORTE/g, '<span class="badge bg-danger fs-6">VENTE FORTE</span>')
+    .replace(/\bVENTE\b/g, '<span class="badge bg-danger">VENTE</span>')
+    .replace(/\bNEUTRE\b/g, '<span class="badge bg-warning text-dark">NEUTRE</span>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/^- /gm, '• ');
+}
+
+function renderChart(chartData, ticker) {
+  if (priceChartInstance) priceChartInstance.destroy();
+  const ctx = document.getElementById('priceChart').getContext('2d');
+  priceChartInstance = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: chartData.dates,
+      datasets: [{
+        label: `${ticker} (MAD)`,
+        data: chartData.prices,
+        borderColor: '#00843D',
+        backgroundColor: 'rgba(0,132,61,0.08)',
+        borderWidth: 2,
+        pointRadius: 0,
+        fill: true,
+        tension: 0.3,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } },
+      scales: {
+        x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#8899aa', maxTicksLimit: 8 } },
+        y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#8899aa' } },
+      }
+    }
+  });
+}
+</script>
+</body>
+</html>
