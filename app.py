@@ -12,21 +12,175 @@ BVC_TICKERS = {
     "TMA": "TMA.CS", "GAZ": "GAZ.CS", "MNG": "MNG.CS", "WAA": "WAA.CS",
     "CDM": "CDM.CS", "SBM": "SBM.CS", "FBR": "FBR.CS", "ADH": "ADH.CS",
     "LHM": "LHM.CS", "ACM": "ACM.CS", "AGC": "AGC.CS", "DHO": "DHO.CS",
-    "SAH": "SAH.CS", "CTM": "CTM.CS",
+    "SAH": "SAH.CS", "CTM": "CTM.CS", "MSA": "MSA.CS", "TQM": "TQM.CS",
+    "RIS": "RIS.CS", "OUL": "OUL.CS", "M2M": "M2M.CS", "ALM": "ALM.CS",
 }
 
 SECTORS = {
     "ATW": "Banques", "BCP": "Banques", "CIH": "Banques",
     "BOA": "Banques", "CDM": "Banques",
-    "IAM": "Télécommunications",
+    "IAM": "Télécommunications", "M2M": "Technologies",
     "CMR": "Matériaux de construction", "LHM": "Matériaux de construction",
-    "HPS": "Technologies", "SAH": "Automobile",
-    "SMI": "Mines", "MNG": "Mines",
+    "HPS": "Technologies", "TQM": "Services",
+    "SAH": "Automobile", "ALM": "Automobile",
+    "SMI": "Mines", "MNG": "Mines", "MSA": "Mines",
     "TMA": "Énergie", "GAZ": "Énergie",
-    "WAA": "Assurances", "ACM": "Assurances",
-    "FBR": "Agroalimentaire", "SBM": "Agroalimentaire",
-    "DHO": "Distribution", "CTM": "Transport",
+    "WAA": "Assurances", "ACM": "Assurances", "RIS": "Assurances",
+    "FBR": "Agroalimentaire", "SBM": "Agroalimentaire", "OUL": "Agroalimentaire",
+    "DHO": "Distribution", "CTM": "Transport", "AGC": "Immobilier",
 }
+
+# Fiches sociétés — source : Bourse de Casablanca + rapports publics
+COMPANY_PROFILES = {
+    "SMI": {
+        "nom": "Société Métallurgique d'Imiter (SMI)",
+        "groupe": "Groupe Managem (filiale)",
+        "activite": "Exploitation de la mine d'argent d'Imiter, dans la région de Tinghir (Drâa-Tafilalet). Première mine d'argent d'Afrique. Produit également du zinc et du plomb en sous-produits.",
+        "concurrents": "Managem (MNG), LafargeHolcim Maroc (LHM), autres filiales minières du groupe OCP",
+        "particularites": "SMI est l'actif minier d'argent le plus important du Maroc. Très sensible au cours international de l'argent (XAG/USD). Réserves prouvées et probables importantes sur le gisement d'Imiter.",
+    },
+    "MNG": {
+        "nom": "Managem",
+        "groupe": "Groupe ONA / SNI",
+        "activite": "Groupe minier marocain diversifié : or, argent, cobalt, cuivre, zinc, fluorine. Opère au Maroc, en Afrique subsaharienne (Côte d'Ivoire, Gabon, Éthiopie, RDC, Soudan) et en Amérique latine.",
+        "concurrents": "OCP (phosphates), SMI (filiale), sociétés minières africaines internationales",
+        "particularites": "Leader minier marocain coté à la BVC. Fortement exposé aux cours des métaux (cobalt, or, argent). Stratégie d'expansion panafricaine.",
+    },
+    "ATW": {
+        "nom": "Attijariwafa Bank",
+        "groupe": "Groupe ONA / SNI",
+        "activite": "Premier groupe bancaire et financier du Maroc. Banque universelle : banque de détail, corporate, marchés de capitaux, assurance (Wafa Assurance), immobilier. Présent dans 27 pays africains.",
+        "concurrents": "Banque Centrale Populaire (BCP), BMCE Bank of Africa (BOA), CIH Bank, Société Générale Maroc",
+        "particularites": "Plus grande capitalisation boursière de la BVC. Leader du crédit au Maroc. Forte expansion en Afrique subsaharienne et Afrique de l'Ouest.",
+    },
+    "BCP": {
+        "nom": "Banque Centrale Populaire (BCP)",
+        "groupe": "Groupe Banque Populaire (Crédit Populaire du Maroc)",
+        "activite": "Banque coopérative de premier plan. Réseau de Banques Populaires Régionales. Banque des MRE (Marocains Résidant à l'Étranger), PME et particuliers. Présente en Afrique subsaharienne.",
+        "concurrents": "Attijariwafa Bank (ATW), BMCE Bank of Africa (BOA), CIH Bank",
+        "particularites": "Deuxième groupe bancaire marocain. Fort ancrage dans les régions. Part de marché solide sur les dépôts MRE.",
+    },
+    "IAM": {
+        "nom": "Itissalat Al-Maghrib (Maroc Telecom)",
+        "groupe": "Groupe Vivendi / Émirats Télécommunications (e&)",
+        "activite": "Opérateur télécom historique du Maroc. Services mobiles, fixe, internet haut débit (Maroc Fibre), data centers, solutions IT pour entreprises. Présent dans 8 pays africains (Mauritanie, Mali, Burkina Faso, Gabon, Côte d'Ivoire, Bénin, Togo, Niger).",
+        "concurrents": "Orange Maroc, Inwi (groupe Al Mada)",
+        "particularites": "Opérateur dominant avec la plus grande part de marché mobile et fixe au Maroc. Dividende généreux historiquement. Croissance portée par l'Afrique subsaharienne.",
+    },
+    "CIH": {
+        "nom": "CIH Bank",
+        "groupe": "Caisse de Dépôt et de Gestion (CDG)",
+        "activite": "Banque de détail orientée crédit immobilier, crédit à la consommation, TPE/PME. Développement du digital banking (CIH Online). Filiale de la CDG.",
+        "concurrents": "Attijariwafa Bank, BCP, BMCE Bank of Africa, Société Générale Maroc",
+        "particularites": "Positionnée sur le segment immobilier et digital. En forte transformation numérique. Profil de croissance dynamique parmi les banques de taille moyenne.",
+    },
+    "BOA": {
+        "nom": "BMCE Bank of Africa",
+        "groupe": "Groupe FinanceCom (famille Othman Benjelloun)",
+        "activite": "Banque universelle marocaine avec forte présence panafricaine (20+ pays). Banque de détail, corporate, marchés, trade finance. Partenariat avec CIC (Crédit Mutuel) en France.",
+        "concurrents": "Attijariwafa Bank (ATW), Banque Centrale Populaire (BCP)",
+        "particularites": "Troisième groupe bancaire marocain. Pionnier de la bancarisation en Afrique subsaharienne via Bank of Africa.",
+    },
+    "HPS": {
+        "nom": "Hightech Payment Systems (HPS)",
+        "groupe": "Indépendant (fondateurs)",
+        "activite": "Éditeur de logiciels de paiement électronique. Solution phare : PowerCARD (gestion de cartes bancaires, monétique, paiement mobile). Clients dans 90+ pays sur 5 continents.",
+        "concurrents": "Sociétés internationales de fintech (Fiserv, FIS, Temenos), concurrents locaux",
+        "particularites": "Champion marocain de la fintech à l'international. Revenus récurrents via licences et maintenance. Forte croissance à l'export.",
+    },
+    "TMA": {
+        "nom": "Taqa Morocco (ex-ONE)",
+        "groupe": "Abu Dhabi National Energy Company (TAQA) — 72,6%",
+        "activite": "Production d'électricité à partir de la centrale thermique à charbon de Jorf Lasfar (2 760 MW installés). Vente exclusive à l'ONEE (Office National de l'Électricité).",
+        "concurrents": "ONEE (monopole distribution), autres producteurs indépendants (IPP)",
+        "particularites": "Contrat d'achat d'électricité (PPA) à long terme avec l'ONEE. Revenus prévisibles et stables. Fort rendement du dividende. Sensible au prix du charbon et au taux de change (USD).",
+    },
+    "CMR": {
+        "nom": "Ciments du Maroc (CimMaroc)",
+        "groupe": "Groupe Heidelberg Materials (ex-HeidelbergCement) — majoritaire",
+        "activite": "Production et commercialisation de ciment, béton prêt à l'emploi, granulats et chaux. Deuxième cimentier du Maroc. Usines à Aït Baha, Marrakech et Safi.",
+        "concurrents": "LafargeHolcim Maroc (LHM), Asment de Témara, Cimat",
+        "particularites": "Très sensible à l'activité BTP et aux programmes d'infrastructure de l'État marocain. Bénéficiaire potentiel de la reconstruction post-séisme d'Al Haouz et du Mondial 2030.",
+    },
+    "LHM": {
+        "nom": "LafargeHolcim Maroc",
+        "groupe": "Holcim Group (Suisse) — majoritaire",
+        "activite": "Leader du ciment au Maroc. Production de ciment, béton, granulats, mortiers et solutions de construction. Présent sur tout le territoire national.",
+        "concurrents": "Ciments du Maroc (CMR), Asment de Témara, Cimat",
+        "particularites": "Premier cimentier marocain. Stratégie de décarbonation (ciment bas carbone). Fort levier sur les grands chantiers d'infrastructure (autoroutes, logements, Coupe du Monde 2030).",
+    },
+    "GAZ": {
+        "nom": "Afriquia Gaz",
+        "groupe": "Groupe Akwa (famille Akhannouch)",
+        "activite": "Distribution et commercialisation de gaz de pétrole liquéfié (GPL) : butane, propane. Leader du marché du gaz au Maroc. Conditionnement en bouteilles et vrac.",
+        "concurrents": "Maghreb Oxygène, Total Énergies Maroc, Vivo Energy",
+        "particularites": "Monopole partiel sur le GPL au Maroc. Prix subventionnés par l'État (butane). Fort dividende. Actionnaire principal : Groupe Akwa.",
+    },
+    "WAA": {
+        "nom": "Wafa Assurance",
+        "groupe": "Attijariwafa Bank (filiale)",
+        "activite": "Compagnie d'assurance multibranche : vie, non-vie, assurance-crédit, santé. Distribution via le réseau Attijariwafa Bank (bancassurance) et courtiers.",
+        "concurrents": "RMA (filiale FinanceCom), Saham Assurance (Sanlam), AXA Assurance Maroc",
+        "particularites": "Leader de l'assurance au Maroc. Forte synergie avec Attijariwafa Bank. Croissance portée par l'assurance-vie et la bancassurance.",
+    },
+    "SBM": {
+        "nom": "Société des Brasseries du Maroc (SBM)",
+        "groupe": "Castel Group (France) — actionnaire majoritaire",
+        "activite": "Production et distribution de boissons : bières (Flag, Casablanca, Heineken sous licence), eaux minérales (Sidi Ali), boissons gazeuses et jus. Leader des boissons alcoolisées au Maroc.",
+        "concurrents": "CBGN (Compagnie des Boissons Gazeuses du Nord), Coca-Cola Maroc, Pepsi",
+        "particularites": "Secteur régulé au Maroc (alcool soumis à taxes élevées). Fort pricing power. Dividende généreux.",
+    },
+    "FBR": {
+        "nom": "Dari Couspate (ex-Farine de Blé Riche)",
+        "groupe": "Indépendant",
+        "activite": "Production et commercialisation de semoule, couscous, pâtes alimentaires et farine. Marques : Dari, Couspate. Distribution nationale et export.",
+        "concurrents": "Meknès (groupe Zouiten), Sonasid (acier — différent secteur), minoteries régionales",
+        "particularites": "Niche agroalimentaire marocaine avec forte marque locale. Sensible aux cours du blé dur importé.",
+    },
+    "CDM": {
+        "nom": "Crédit du Maroc",
+        "groupe": "Groupe Crédit Agricole (France) — majoritaire",
+        "activite": "Banque de détail et corporate au Maroc. Réseau national d'agences. Services aux particuliers, professionnels et entreprises. Filiale de Crédit Agricole SA.",
+        "concurrents": "Attijariwafa Bank, BCP, BMCE Bank of Africa, Société Générale Maroc",
+        "particularites": "Banque de taille moyenne en transformation. Adossée à Crédit Agricole (expertise internationale). Profil défensif.",
+    },
+    "SAH": {
+        "nom": "Société Automobile Haddioui (SAH Liwa)",
+        "groupe": "Famille Haddioui",
+        "activite": "Distribution automobile : concessionnaire de marques (Renault, Dacia). Vente de véhicules neufs et occasion, financement, après-vente et pièces de rechange.",
+        "concurrents": "Auto Nejma, Sopriam (Peugeot-Citroën), SMEIA (BMW), Omar Zniber",
+        "particularites": "Sensible au marché automobile marocain, aux taux d'intérêt (crédit auto) et à la politique d'importation.",
+    },
+    "DHO": {
+        "nom": "Douja Promotion Groupe Addoha",
+        "groupe": "Famille Anas Sefrioui",
+        "activite": "Premier promoteur immobilier marocain. Logement social, économique, moyen et haut standing. Présence en Afrique subsaharienne (Côte d'Ivoire, Sénégal, Ghana, Cameroun).",
+        "concurrents": "Alliances Développement Immobilier (ADI), Résidences Dar Saada",
+        "particularites": "Très sensible aux politiques de logement social de l'État marocain. Restructuration de la dette en cours. Fort endettement historique.",
+    },
+    "CTM": {
+        "nom": "CTM (Compagnie de Transport au Maroc)",
+        "groupe": "Groupe FinanceCom (actionnaire)",
+        "activite": "Transport routier de voyageurs au Maroc et vers l'Europe (Maroc-France-Espagne-Belgique). Réseau national de gares routières. Services premium et économiques.",
+        "concurrents": "Supratours (ONCF), transporteurs privés régionaux, compagnies aériennes low-cost",
+        "particularites": "Quasi-monopole sur les liaisons longue distance de qualité. Bénéficiaire de la croissance du tourisme et des MRE.",
+    },
+}
+
+
+def get_company_context(ticker):
+    """Return company profile string for the prompt."""
+    p = COMPANY_PROFILES.get(ticker)
+    if not p:
+        return ""
+    lines = [
+        f"- Nom complet    : {p['nom']}",
+        f"- Groupe         : {p['groupe']}",
+        f"- Activité       : {p['activite']}",
+        f"- Concurrents    : {p['concurrents']}",
+        f"- Particularités : {p['particularites']}",
+    ]
+    return "Fiche société (source : Bourse de Casablanca / rapports publics) :\n" + "\n".join(lines)
 
 
 def get_client():
@@ -143,19 +297,25 @@ Données de clôture hebdomadaires — 1 an (Yahoo Finance) :
     else:
         data_context = "Données marché non disponibles. Formule des hypothèses réalistes basées sur le contexte du marché marocain."
 
+    company_context = get_company_context(ticker)
+    company_section = f"\n{company_context}\n" if company_context else ""
+
     prompt = f"""Tu es un analyste financier expert des marchés émergents, spécialisé dans la Bourse de Casablanca (BVC).
 Ta mission est de produire une analyse complète, professionnelle et orientée décision, digne d'un rapport de broker marocain.
 
 Ticker : **{ticker}** | Secteur : {sector}
-
+{company_section}
 {data_context}
 
 Génère l'analyse complète avec EXACTEMENT cette structure :
 
 ## 🔎 1. Présentation de la société
-- Nom complet et activité principale
+Utilise STRICTEMENT la fiche société fournie ci-dessus (si disponible) pour les informations suivantes :
+- Nom complet et activité principale (respecte scrupuleusement la description fournie)
+- Groupe d'appartenance et actionnariat
 - Positionnement sur le marché marocain
 - Principaux concurrents locaux
+- Points de différenciation clés
 
 ## 📊 2. Analyse fondamentale
 
