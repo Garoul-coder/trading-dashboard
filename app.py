@@ -55,6 +55,11 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok", "api_key_set": bool(os.environ.get("ANTHROPIC_API_KEY"))})
+
+
 @app.route("/analyze", methods=["POST"])
 def analyze():
     try:
@@ -88,7 +93,7 @@ def get_stock_data(ticker):
     yf_ticker = BVC_TICKERS.get(ticker, f"{ticker}.CS")
     try:
         stock = yf.Ticker(yf_ticker)
-        hist = stock.history(period="6mo")
+        hist = stock.history(period="3mo")
 
         if hist.empty:
             return {"data_available": False}
