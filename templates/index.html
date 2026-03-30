@@ -293,36 +293,59 @@ function renderResults(data) {
 }
 
 function markdownToHtml(text) {
+  // 1. Convert markdown tables first (before other replacements)
+  text = text.replace(/((?:^\|.+\|\n?)+)/gm, (block) => {
+    const lines = block.trim().split('\n').filter(l => l.trim());
+    if (lines.length < 2) return block;
+
+    const isSeparator = l => /^\|[\s\-:|]+\|/.test(l);
+    const parseRow = l => l.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+
+    let html = '<div class="table-responsive my-3"><table class="table table-dark table-bordered table-sm" style="font-size:.88rem;border-color:rgba(255,255,255,.15)">';
+    let inBody = false;
+
+    lines.forEach((line, i) => {
+      if (isSeparator(line)) { inBody = true; return; }
+      const cells = parseRow(line);
+      if (i === 0) {
+        html += '<thead><tr>' + cells.map(c => `<th class="text-center" style="background:rgba(0,132,61,.25);color:#4fc3f7">${applyInline(c)}</th>`).join('') + '</tr></thead><tbody>';
+      } else {
+        html += '<tr>' + cells.map((c, ci) => {
+          const align = ci === 0 ? 'text-start fw-semibold' : 'text-center';
+          return `<td class="${align}">${applyInline(c)}</td>`;
+        }).join('') + '</tr>';
+      }
+    });
+    html += '</tbody></table></div>';
+    return html;
+  });
+
+  // 2. Apply remaining markdown
   return text
-    // H1
-    .replace(/^# (.+)$/gm, '<h4 class="fw-bold mt-3 mb-2" style="color:#00843D">$1</h4>')
-    // H2
+    .replace(/^# (.+)$/gm,  '<h4 class="fw-bold mt-3 mb-2" style="color:#00843D">$1</h4>')
     .replace(/^## (.+)$/gm, '<h5 class="fw-bold mt-4 mb-2 border-bottom pb-2" style="color:#4fc3f7">$1</h5>')
-    // H3
-    .replace(/^### (.+)$/gm, '<h6 class="fw-semibold mt-3 mb-1 text-warning">$1</h6>')
-    // Bold
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    // Badges signals
-    .replace(/🟢\s*HAUSSIER/g, '<span class="badge bg-success ms-1">🟢 HAUSSIER</span>')
-    .replace(/🟡\s*NEUTRE/g, '<span class="badge bg-warning text-dark ms-1">🟡 NEUTRE</span>')
-    .replace(/🔴\s*BAISSIER/g, '<span class="badge bg-danger ms-1">🔴 BAISSIER</span>')
-    // Badges recommandation
-    .replace(/ACHAT FORT/g, '<span class="badge bg-success px-3 py-2 fs-6">⭐ ACHAT FORT</span>')
-    .replace(/VENTE FORTE/g, '<span class="badge bg-danger px-3 py-2 fs-6">🔴 VENTE FORTE</span>')
-    .replace(/\bACHAT\b/g, '<span class="badge bg-success px-2">✅ ACHAT</span>')
-    .replace(/\bVENTE\b/g, '<span class="badge bg-danger px-2">❌ VENTE</span>')
-    .replace(/\bNEUTRE\b/g, '<span class="badge bg-warning text-dark px-2">⚖️ NEUTRE</span>')
-    // Horizontal rule
-    .replace(/^---+$/gm, '<hr style="border-color:rgba(255,255,255,.1)">')
-    // List items
-    .replace(/^[-*] (.+)$/gm, '<div class="d-flex gap-2 mb-1"><span style="color:#00843D">▸</span><span>$1</span></div>')
-    // Paragraphs (double newline)
+    .replace(/^### (.+)$/gm,'<h6 class="fw-semibold mt-3 mb-1 text-warning">$1</h6>')
+    .replace(/^---+$/gm,    '<hr style="border-color:rgba(255,255,255,.1)">')
+    .replace(/^[-*] (.+)$/gm,'<div class="d-flex gap-2 mb-1"><span style="color:#00843D">▸</span><span>$1</span></div>')
     .replace(/\n\n/g, '</p><p class="mb-2">')
-    // Single newlines
-    .replace(/\n/g, '<br>')
-    // Wrap in paragraph
-    .replace(/^/, '<p class="mb-2">')
-    .replace(/$/, '</p>');
+    .replace(/\n/g,   '<br>')
+    .replace(/^/,     '<p class="mb-2">')
+    .replace(/$/,     '</p>');
+}
+
+function applyInline(text) {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/🟢\s*HAUSSIER/g, '<span class="badge bg-success">🟢 HAUSSIER</span>')
+    .replace(/🟡\s*NEUTRE/g,   '<span class="badge bg-warning text-dark">🟡 NEUTRE</span>')
+    .replace(/🔴\s*BAISSIER/g, '<span class="badge bg-danger">🔴 BAISSIER</span>')
+    .replace(/ACHAT FORT/g,    '<span class="badge bg-success">⭐ ACHAT FORT</span>')
+    .replace(/VENTE FORTE/g,   '<span class="badge bg-danger">🔴 VENTE FORTE</span>')
+    .replace(/\bACHAT\b/g,     '<span class="badge bg-success">✅ ACHAT</span>')
+    .replace(/\bVENTE\b/g,     '<span class="badge bg-danger">❌ VENTE</span>')
+    .replace(/\bNEUTRE\b/g,    '<span class="badge bg-warning text-dark">⚖️ NEUTRE</span>')
+    .replace(/\bCONSERVER\b/g, '<span class="badge bg-info text-dark">🔵 CONSERVER</span>')
+    .replace(/\bALLÉGER\b/g,   '<span class="badge bg-warning text-dark">🟡 ALLÉGER</span>');
 }
 
 function renderChart(chartData, ticker) {
