@@ -242,12 +242,43 @@ async function doAnalyze() {
 }
 
 function renderResults(data) {
+  const sd = data.stock_data;
   document.getElementById('rTicker').textContent = data.ticker;
   document.getElementById('rSector').textContent = data.sector;
-  document.getElementById('rPrice').textContent = '';
-  document.getElementById('rChange1mo').textContent = '';
-  document.getElementById('metricsRow').style.display = 'none';
-  document.getElementById('chartCard').style.display = 'none';
+
+  if (sd && sd.data_available) {
+    document.getElementById('rPrice').textContent = `${sd.current_price} MAD`;
+    const ch1 = sd.change_1mo;
+    const el = document.getElementById('rChange1mo');
+    el.textContent = `${ch1 >= 0 ? '+' : ''}${ch1.toFixed(2)}% (1M)`;
+    el.className = 'fw-bold fs-5 ' + (ch1 > 0 ? 'positive' : ch1 < 0 ? 'negative' : 'neutral');
+
+    // RSI
+    const rsi = sd.rsi;
+    if (rsi) {
+      document.getElementById('mRsi').textContent = rsi.toFixed(1);
+      document.getElementById('mRsi').className = 'metric-value ' + (rsi < 30 ? 'positive' : rsi > 70 ? 'negative' : 'neutral');
+      document.getElementById('rsiDot').style.marginLeft = `calc(${Math.min(rsi,100)}% - 7px)`;
+    }
+    document.getElementById('mMa').innerHTML =
+      `<span class="text-info">${sd.ma20 || '—'}</span> / <span class="text-warning">${sd.ma50 || '—'}</span>`;
+    document.getElementById('m52w').innerHTML =
+      `<span class="positive">${sd.high_52w}</span> / <span class="negative">${sd.low_52w}</span>`;
+    const perf1y = sd.change_1y;
+    document.getElementById('mPer').innerHTML =
+      `<span class="${perf1y >= 0 ? 'positive' : 'negative'}">${perf1y >= 0 ? '+' : ''}${perf1y.toFixed(1)}%</span><br><small class="text-secondary">Perf. 1 an</small>`;
+
+    document.getElementById('metricsRow').style.display = '';
+    if (sd.chart_data) {
+      document.getElementById('chartCard').style.display = 'block';
+      renderChart(sd.chart_data, data.ticker);
+    }
+  } else {
+    document.getElementById('rPrice').textContent = '';
+    document.getElementById('rChange1mo').textContent = '';
+    document.getElementById('metricsRow').style.display = 'none';
+    document.getElementById('chartCard').style.display = 'none';
+  }
 
   // Analysis — render full markdown properly
   const container = document.getElementById('analysisContainer');
