@@ -194,8 +194,8 @@ Réponds intégralement en français."""
 
     client = get_client()
     response = client.messages.create(
-        model="claude-opus-4-6",
-        max_tokens=2500,
+        model="claude-haiku-4-5",
+        max_tokens=2000,
         messages=[{"role": "user", "content": prompt}],
     )
     return response.content[0].text
