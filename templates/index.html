@@ -380,62 +380,42 @@ function renderResults(data) {
   const hasBN = sd && sd.source === 'boursenews' && sd.cours;
 
   if (hasBN) {
-    // Prix principal
+    // Prix + variation
     document.getElementById('rPrice').textContent = `${fmt(sd.cours)} MAD`;
     const varEl = document.getElementById('rChange1mo');
     const v = sd.variation;
     varEl.textContent = v != null ? `${v >= 0 ? '+' : ''}${fmt(v)}% séance` : '—';
     varEl.className = 'fw-bold fs-5 ' + (v > 0 ? 'positive' : v < 0 ? 'negative' : 'neutral');
 
-    // Card 1 — Cours / Haut-Bas séance
+    // Card 1 — Cours actuel
     document.getElementById('mRsi').textContent = `${fmt(sd.cours)} MAD`;
     document.getElementById('mRsi').className = 'metric-value text-white';
-    document.getElementById('rsiBar').style.display = 'none';
-    document.getElementById('rsiDot').style.display = 'none';
+    document.getElementById('rsiBar').style.display  = 'none';
+    document.getElementById('rsiDot').style.display  = 'none';
+    document.querySelectorAll('#metricsRow .metric-label')[0].textContent = 'Cours BVC';
+
+    // Card 2 — Volume
+    const vol = sd.volume ? Math.round(sd.volume).toLocaleString('fr-FR') : '—';
+    document.getElementById('mMa').innerHTML =
+      `<span class="text-info fw-bold">${vol}</span><br><small class="text-secondary" style="font-size:.7rem">titres échangés</small>`;
+    document.querySelectorAll('#metricsRow .metric-label')[1].textContent = 'Volume séance';
+
+    // Card 3 — Haut / Bas du jour
     document.getElementById('m52w').innerHTML =
       `<span class="positive">${fmt(sd.haut)}</span> / <span class="negative">${fmt(sd.bas)}</span>`;
-
-    // Card 2 — Volume / Cours cible
-    const vol = sd.volume ? parseInt(sd.volume).toLocaleString('fr-FR') : '—';
-    document.getElementById('mMa').innerHTML =
-      `<span class="text-info fw-bold">${vol}</span><br><small class="text-secondary" style="font-size:.7rem">titres échangés</small>`;
-
-    // Card 3 — Cours cible analyste
-    const cible = sd.cours_cible;
-    if (cible && sd.cours) {
-      const upside = ((cible - sd.cours) / sd.cours * 100);
-      document.getElementById('mPer').innerHTML =
-        `<span class="${upside >= 0 ? 'positive' : 'negative'}">${fmt(cible)} MAD</span>` +
-        `<br><small class="text-secondary" style="font-size:.7rem">Cible ${upside >= 0 ? '+' : ''}${fmt(upside, 1)}%</small>`;
-    } else {
-      document.getElementById('mPer').innerHTML = '<span class="text-secondary">—</span>';
-    }
-
-    // Card 4 — Signaux techniques
-    const sig = sd.signaux_techniques || {};
-    const buy = sig.acheter || 0, neu = sig.neutre || 0, sell = sig.vendre || 0;
-    const total = buy + neu + sell || 1;
-    let sigColor = 'neutral', sigText = 'NEUTRE';
-    if (buy > sell && buy > neu) { sigColor = 'positive'; sigText = 'HAUSSIER'; }
-    else if (sell > buy && sell > neu) { sigColor = 'negative'; sigText = 'BAISSIER'; }
-    // override card 2 label
-    document.getElementById('mMa').innerHTML =
-      `<span class="text-info fw-bold">${vol}</span><br><small class="text-secondary" style="font-size:.7rem">titres échangés</small>`;
-
-    // Inject signal card into card 4 slot
-    document.getElementById('mPer').innerHTML = cible && sd.cours
-      ? `<span class="${upside >= 0 ? 'positive' : 'negative'}">${fmt(cible)} MAD</span>` +
-        `<br><small class="text-secondary" style="font-size:.7rem">Cible ${upside >= 0 ? '+' : ''}${fmt(upside, 1)}%</small>`
-      : '<span class="text-secondary">—</span>';
-
-    // Update card labels
-    document.querySelectorAll('#metricsRow .metric-label')[0].textContent = 'Cours BVC';
-    document.querySelectorAll('#metricsRow .metric-label')[1].textContent = 'Volume séance';
     document.querySelectorAll('#metricsRow .metric-label')[2].textContent = 'Haut / Bas';
+
+    // Card 4 — Cours cible analyste
+    const cible  = sd.cours_cible || null;
+    const upside = (cible && sd.cours) ? ((cible - sd.cours) / sd.cours * 100) : null;
+    document.getElementById('mPer').innerHTML = upside != null
+      ? `<span class="${upside >= 0 ? 'positive' : 'negative'}">${fmt(cible)} MAD</span>` +
+        `<br><small class="text-secondary" style="font-size:.7rem">Potentiel ${upside >= 0 ? '+' : ''}${fmt(upside, 1)}%</small>`
+      : '<span class="text-secondary">—</span>';
     document.querySelectorAll('#metricsRow .metric-label')[3].textContent = 'Cours cible';
 
     document.getElementById('metricsRow').style.display = '';
-    document.getElementById('chartCard').style.display = 'none';
+    document.getElementById('chartCard').style.display  = 'none';
 
   } else {
     document.getElementById('rPrice').textContent = '';
