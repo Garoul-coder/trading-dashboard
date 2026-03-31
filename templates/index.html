@@ -307,7 +307,7 @@
 </div>
 
 <footer class="text-center text-secondary py-3" style="font-size:.8rem; border-top:1px solid rgba(255,255,255,.05);">
-  Propulsé par Claude Opus 4.6 (Anthropic) · Données via Yahoo Finance · Bourse de Casablanca
+  Propulsé par <strong>Claude Haiku 4.5</strong> (Anthropic) · Données scrappées en temps réel depuis <strong>boursenews.ma</strong> · Bourse de Casablanca
 </footer>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
@@ -357,6 +357,11 @@ async function doAnalyze() {
   }
 }
 
+function fmt(n, dec=2) {
+  if (n == null) return '—';
+  return parseFloat(n).toLocaleString('fr-FR', {minimumFractionDigits: dec, maximumFractionDigits: dec});
+}
+
 function renderResults(data) {
   const sd = data.stock_data;
   document.getElementById('rTicker').textContent = data.ticker;
@@ -364,43 +369,74 @@ function renderResults(data) {
 
   // Source badge
   const srcEl = document.getElementById('rSource');
-  if (data.data_source === 'medias24') {
-    srcEl.textContent = '✓ BVC via medias24';
-    srcEl.style.background = 'rgba(0,132,61,.5)';
-  } else if (data.data_source === 'yahoo') {
-    srcEl.textContent = '◎ Yahoo Finance';
-    srcEl.style.background = 'rgba(100,100,100,.4)';
+  if (data.data_source === 'boursenews') {
+    srcEl.textContent = '✓ Données BVC — boursenews.ma';
+    srcEl.style.background = 'rgba(0,132,61,.6)';
   } else {
-    srcEl.textContent = '';
+    srcEl.textContent = '⚠ Données indisponibles';
+    srcEl.style.background = 'rgba(150,80,0,.5)';
   }
 
-  if (sd && sd.data_available) {
-    document.getElementById('rPrice').textContent = `${sd.current_price} MAD`;
-    const ch1 = sd.change_1mo;
-    const el = document.getElementById('rChange1mo');
-    el.textContent = `${ch1 >= 0 ? '+' : ''}${ch1.toFixed(2)}% (1M)`;
-    el.className = 'fw-bold fs-5 ' + (ch1 > 0 ? 'positive' : ch1 < 0 ? 'negative' : 'neutral');
+  const hasBN = sd && sd.source === 'boursenews' && sd.cours;
 
-    // RSI
-    const rsi = sd.rsi;
-    if (rsi) {
-      document.getElementById('mRsi').textContent = rsi.toFixed(1);
-      document.getElementById('mRsi').className = 'metric-value ' + (rsi < 30 ? 'positive' : rsi > 70 ? 'negative' : 'neutral');
-      document.getElementById('rsiDot').style.marginLeft = `calc(${Math.min(rsi,100)}% - 7px)`;
-    }
-    document.getElementById('mMa').innerHTML =
-      `<span class="text-info">${sd.ma20 || '—'}</span> / <span class="text-warning">${sd.ma50 || '—'}</span>`;
+  if (hasBN) {
+    // Prix principal
+    document.getElementById('rPrice').textContent = `${fmt(sd.cours)} MAD`;
+    const varEl = document.getElementById('rChange1mo');
+    const v = sd.variation;
+    varEl.textContent = v != null ? `${v >= 0 ? '+' : ''}${fmt(v)}% séance` : '—';
+    varEl.className = 'fw-bold fs-5 ' + (v > 0 ? 'positive' : v < 0 ? 'negative' : 'neutral');
+
+    // Card 1 — Cours / Haut-Bas séance
+    document.getElementById('mRsi').textContent = `${fmt(sd.cours)} MAD`;
+    document.getElementById('mRsi').className = 'metric-value text-white';
+    document.getElementById('rsiBar').style.display = 'none';
+    document.getElementById('rsiDot').style.display = 'none';
     document.getElementById('m52w').innerHTML =
-      `<span class="positive">${sd.high_52w}</span> / <span class="negative">${sd.low_52w}</span>`;
-    const perf1y = sd.change_1y;
-    document.getElementById('mPer').innerHTML =
-      `<span class="${perf1y >= 0 ? 'positive' : 'negative'}">${perf1y >= 0 ? '+' : ''}${perf1y.toFixed(1)}%</span><br><small class="text-secondary">Perf. 1 an</small>`;
+      `<span class="positive">${fmt(sd.haut)}</span> / <span class="negative">${fmt(sd.bas)}</span>`;
+
+    // Card 2 — Volume / Cours cible
+    const vol = sd.volume ? parseInt(sd.volume).toLocaleString('fr-FR') : '—';
+    document.getElementById('mMa').innerHTML =
+      `<span class="text-info fw-bold">${vol}</span><br><small class="text-secondary" style="font-size:.7rem">titres échangés</small>`;
+
+    // Card 3 — Cours cible analyste
+    const cible = sd.cours_cible;
+    if (cible && sd.cours) {
+      const upside = ((cible - sd.cours) / sd.cours * 100);
+      document.getElementById('mPer').innerHTML =
+        `<span class="${upside >= 0 ? 'positive' : 'negative'}">${fmt(cible)} MAD</span>` +
+        `<br><small class="text-secondary" style="font-size:.7rem">Cible ${upside >= 0 ? '+' : ''}${fmt(upside, 1)}%</small>`;
+    } else {
+      document.getElementById('mPer').innerHTML = '<span class="text-secondary">—</span>';
+    }
+
+    // Card 4 — Signaux techniques
+    const sig = sd.signaux_techniques || {};
+    const buy = sig.acheter || 0, neu = sig.neutre || 0, sell = sig.vendre || 0;
+    const total = buy + neu + sell || 1;
+    let sigColor = 'neutral', sigText = 'NEUTRE';
+    if (buy > sell && buy > neu) { sigColor = 'positive'; sigText = 'HAUSSIER'; }
+    else if (sell > buy && sell > neu) { sigColor = 'negative'; sigText = 'BAISSIER'; }
+    // override card 2 label
+    document.getElementById('mMa').innerHTML =
+      `<span class="text-info fw-bold">${vol}</span><br><small class="text-secondary" style="font-size:.7rem">titres échangés</small>`;
+
+    // Inject signal card into card 4 slot
+    document.getElementById('mPer').innerHTML = cible && sd.cours
+      ? `<span class="${upside >= 0 ? 'positive' : 'negative'}">${fmt(cible)} MAD</span>` +
+        `<br><small class="text-secondary" style="font-size:.7rem">Cible ${upside >= 0 ? '+' : ''}${fmt(upside, 1)}%</small>`
+      : '<span class="text-secondary">—</span>';
+
+    // Update card labels
+    document.querySelectorAll('#metricsRow .metric-label')[0].textContent = 'Cours BVC';
+    document.querySelectorAll('#metricsRow .metric-label')[1].textContent = 'Volume séance';
+    document.querySelectorAll('#metricsRow .metric-label')[2].textContent = 'Haut / Bas';
+    document.querySelectorAll('#metricsRow .metric-label')[3].textContent = 'Cours cible';
 
     document.getElementById('metricsRow').style.display = '';
-    if (sd.chart_data) {
-      document.getElementById('chartCard').style.display = 'block';
-      renderChart(sd.chart_data, data.ticker);
-    }
+    document.getElementById('chartCard').style.display = 'none';
+
   } else {
     document.getElementById('rPrice').textContent = '';
     document.getElementById('rChange1mo').textContent = '';
