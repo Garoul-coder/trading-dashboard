@@ -338,80 +338,32 @@ _BN_HEADERS = {
 
 
 # ---------------------------------------------------------------------------
-# Yahoo Finance — real-time price (BVC tickers trade as {TICKER}.CS)
+# Stooq — real-time price via CSV (no auth, no Cloudflare, BVC = {ticker}.cs)
 # ---------------------------------------------------------------------------
-_YAHOO_OVERRIDES = {
-    # ticker → Yahoo symbol (only needed when it differs from {ticker}.CS)
-    "IAM":    "IAM.CS",
-    "ATW":    "ATW.CS",
-    "BCP":    "BCP.CS",
-    "CIH":    "CIH.CS",
-    "BOA":    "BOA.CS",
-    "CDM":    "CDM.CS",
-    "BMCI":   "BMCI.CS",
-    "CFG":    "CFG.CS",
-    "WAA":    "WAA.CS",
-    "ACM":    "ACM.CS",
-    "SMI":    "SMI.CS",
-    "MNG":    "MNG.CS",
-    "CMT":    "CMT.CS",
-    "CMR":    "CMR.CS",
-    "LHM":    "LHM.CS",
-    "TMA":    "TMA.CS",
-    "GAZ":    "GAZ.CS",
-    "TQM":    "TQM.CS",
-    "SBM":    "SBM.CS",
-    "OUL":    "OUL.CS",
-    "LES":    "LES.CS",
-    "CSR":    "CSR.CS",
-    "MUT":    "MUT.CS",
-    "LBV":    "LBV.CS",
-    "ADH":    "ADH.CS",
-    "ALM":    "ALM.CS",
-    "DHO":    "DHO.CS",
-    "RDS":    "RDS.CS",
-    "SID":    "SID.CS",
-    "CTM":    "CTM.CS",
-    "RIS":    "RIS.CS",
-    "MSA":    "MSA.CS",
-    "HPS":    "HPS.CS",
-    "M2M":    "M2M.CS",
-    "TGCC":   "TGCC.CS",
-    "JET":    "JET.CS",
-    "DISWAY": "DISWAY.CS",
-    "DISTY":  "DISTY.CS",
-    "SLF":    "SLF.CS",
-    "AFMA":   "AFMA.CS",
-    "EQD":    "EQD.CS",
-    "MAL":    "MAL.CS",
-    "PRO":    "PRO.CS",
-    "SNEP":   "SNEP.CS",
-    "MOX":    "MOX.CS",
-}
-
-_YAHOO_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-
-
-def fetch_yahoo_price(ticker):
+def fetch_stooq_price(ticker):
     """
-    Fetch real-time price + previous close from Yahoo Finance.
-    Returns dict with 'cours', 'cours_veille', 'variation' or None on failure.
-    Timeout: 5s total. No auth required.
+    Fetch latest close from stooq.com CSV endpoint.
+    URL: https://stooq.com/q/l/?s={ticker}.cs&f=sd2t2ohlcv&h&e=csv
+    CSV columns: Symbol,Date,Time,Open,High,Low,Close,Volume
+    Returns dict with 'cours', 'variation' or None on failure.
     """
-    symbol = _YAHOO_OVERRIDES.get(ticker, ticker + ".CS")
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=1d&interval=1d"
+    symbol = ticker.lower() + ".cs"
+    url = f"https://stooq.com/q/l/?s={symbol}&f=sd2t2ohlcv&h&e=csv"
     try:
-        r = requests.get(url, headers=_YAHOO_HEADERS, timeout=(3, 5))
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=(3, 6))
         r.raise_for_status()
-        meta = r.json()["chart"]["result"][0]["meta"]
-        price = meta.get("regularMarketPrice")
-        prev  = meta.get("previousClose") or meta.get("chartPreviousClose")
-        if price:
-            variation = ((price - prev) / prev * 100) if prev else None
-            print(f"[YAHOO] {ticker} ({symbol}) = {price} MAD")
-            return {"cours": price, "cours_veille": prev, "variation": variation}
+        lines = [ln.strip() for ln in r.text.strip().splitlines() if ln.strip()]
+        if len(lines) >= 2:
+            cols = lines[1].split(",")
+            # cols: Symbol, Date, Time, Open, High, Low, Close, Volume
+            close = float(cols[6]) if len(cols) > 6 and cols[6] not in ("", "N/D") else None
+            open_ = float(cols[3]) if len(cols) > 3 and cols[3] not in ("", "N/D") else None
+            if close and close > 0:
+                variation = ((close - open_) / open_ * 100) if open_ else None
+                print(f"[STOOQ] {ticker} ({symbol}) = {close} MAD")
+                return {"cours": close, "variation": variation, "prix_source": "Stooq"}
     except Exception as e:
-        print(f"[YAHOO] {ticker} failed: {e}")
+        print(f"[STOOQ] {ticker} failed: {e}")
     return None
 
 
@@ -808,8 +760,8 @@ def analyze():
 
         sector = SECTORS.get(ticker, "Secteur divers")
 
-        # 1. Yahoo Finance — real-time price (fast, reliable, pure JSON)
-        yp = fetch_yahoo_price(ticker)
+        # 1. Stooq — real-time price (CSV, no auth, BVC = {ticker}.cs)
+        yp = fetch_stooq_price(ticker)
 
         # 2. Boursenews — fundamentals, ratios, technicals
         sd = None
