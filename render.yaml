@@ -1,10 +1,10 @@
 services:
   - type: web
-    name: bvc-trading-dashboard
-    env: python
+    name: trading-dashboard
+    runtime: python
+    pythonVersion: "3.11.9"
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app
-    plan: free
+    startCommand: gunicorn app:app --timeout 120 --workers 1 --threads 2
     envVars:
-      - key: ANTHROPIC_API_KEY
-        sync: false
+      - key: PYTHON_VERSION
+        value: "3.11.9"
