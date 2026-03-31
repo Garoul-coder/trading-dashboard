@@ -361,7 +361,7 @@ def scrape_boursenews(slug):
 
     url = f"https://boursenews.ma/action/{slug}"
     try:
-        resp = requests.get(url, headers=_BN_HEADERS, timeout=20)
+        resp = requests.get(url, headers=_BN_HEADERS, timeout=(5, 10))
         resp.raise_for_status()
     except requests.exceptions.Timeout:
         raise RuntimeError(f"Timeout scraping {url}")
@@ -640,87 +640,51 @@ def generate_analysis(ticker, sector, sd):
 
 """
 
-    prompt = f"""Tu es un analyste financier expert des marchés émergents, spécialisé dans la Bourse de Casablanca (BVC).
-Ta mission est de produire une analyse complète, professionnelle et orientée décision, digne d'un rapport de broker marocain.
+    prompt = f"""Analyste financier BVC expert. Analyse complète en français, style broker, bullet points concis.
 
 Ticker : **{ticker}** | Secteur : {sector}
 {company_section}
 {data_context}
 
-Génère l'analyse complète avec EXACTEMENT cette structure :
+Structure OBLIGATOIRE (7 sections) :
 
-## 🔎 1. Présentation de la société
-{price_snapshot}
-Utilise STRICTEMENT la fiche société fournie ci-dessus (si disponible) :
-- Nom complet et activité principale (respecte scrupuleusement la description fournie)
-- Groupe d'appartenance et actionnariat principal
-- Positionnement sur le marché marocain
-- Principaux concurrents locaux
-- Points de différenciation clés
+## 🔎 1. Présentation
+{price_snapshot}- Nom complet, groupe, activité principale
+- Positionnement marché marocain, concurrents clés
 
 ## 📊 2. Analyse fondamentale
-
-### a) Résultats financiers récents
-- Chiffre d'affaires et évolution YoY (utilise les données fournies)
-- Résultat net et évolution YoY
-- Marges EBITDA et nette
-- Éléments marquants de l'exercice
-
-### b) Ratios clés
-- PER, ROE, Dette/EBITDA
-- Rendement du dividende (DPA / cours actuel)
-- Valorisation vs historique : sur-valorisé ou sous-valorisé ?
-
-### c) Analyse qualitative
-- Forces et avantages concurrentiels
-- Faiblesses
-- Risques (macro, sectoriels, spécifiques Maroc)
-- Perspectives de croissance
+- CA, résultat net, marges EBITDA/nette (utilise données fournies, avec évolutions YoY)
+- PER, ROE, rendement dividende (DPA/cours), valorisation vs historique
+- Forces, faiblesses, risques macro/sectoriels, perspectives
 
 ## 📈 3. Analyse technique
+- Tendances court/moyen/long terme
+- Signaux Acheter/Neutre/Vendre fournis + scores radar (si disponibles)
+- Supports et résistances clés (MAD), configuration actuelle
 
-### a) Tendance
-- Court terme (4-8 semaines)
-- Moyen terme (3-6 mois)
-- Long terme (12 mois)
-
-### b) Indicateurs techniques
-- Signaux techniques fournis (Acheter / Neutre / Vendre)
-- Scores qualitatifs (Fondamentaux, Momentum, Visibilité, Consensus, Valorisation)
-- Position relative au cours cible analyste
-
-### c) Niveaux clés
-- Supports principaux (en MAD)
-- Résistances principales (en MAD)
-- Situation actuelle : breakout, consolidation ou retournement ?
-
-## ⚡ 4. Signaux de momentum
-- Tendance de fond : accélération ou ralentissement
-- Force relative vs indice MASI
-- Signal global : 🟢 HAUSSIER | 🟡 NEUTRE | 🔴 BAISSIER
+## ⚡ 4. Momentum
+- Tendance de fond, force vs MASI
+- Signal : 🟢 HAUSSIER | 🟡 NEUTRE | 🔴 BAISSIER
 
 ## 🏭 5. Comparaison sectorielle
-- Comparer {ticker} avec 2-3 pairs marocains du secteur {sector}
-- Tableau comparatif : croissance, rentabilité, valorisation
-- Conclusion : leader ou retardataire ?
+| Critère | {ticker} | Pair 1 | Pair 2 |
+|---|---|---|---|
+| Croissance CA | | | |
+| Marge nette | | | |
+| PER | | | |
 
-## 🧾 6. Opinion d'investissement
-- Recommandation : **ACHAT FORT** | **ACHAT** | **CONSERVER** | **ALLÉGER** | **VENTE**
-- Horizon : court / moyen / long terme
-- Prix cible à 12 mois (en MAD)
-- Niveau de risque : Faible | Moyen | Élevé
-- 3 à 5 arguments clés
+## 🧾 6. Opinion
+- **ACHAT FORT** / **ACHAT** / **CONSERVER** / **ALLÉGER** / **VENTE**
+- Prix cible 12 mois (MAD) · Risque : Faible/Moyen/Élevé
+- 3 arguments clés
 
 ## 🧠 7. Résumé exécutif
-5 à 7 lignes maximum. Synthèse orientée décision, style flash note de broker.
-
----
-Règles : français uniquement · bullet points · utilise les données chiffrées fournies · hypothèses réalistes si données manquantes."""
+4-5 lignes max, style flash note broker, orienté décision."""
 
     client = get_client()
     response = client.messages.create(
         model="claude-haiku-4-5",
-        max_tokens=3000,
+        max_tokens=2000,
         messages=[{"role": "user", "content": prompt}],
     )
     return response.content[0].text
