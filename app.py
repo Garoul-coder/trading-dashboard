@@ -337,6 +337,84 @@ _BN_HEADERS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Yahoo Finance — real-time price (BVC tickers trade as {TICKER}.CS)
+# ---------------------------------------------------------------------------
+_YAHOO_OVERRIDES = {
+    # ticker → Yahoo symbol (only needed when it differs from {ticker}.CS)
+    "IAM":    "IAM.CS",
+    "ATW":    "ATW.CS",
+    "BCP":    "BCP.CS",
+    "CIH":    "CIH.CS",
+    "BOA":    "BOA.CS",
+    "CDM":    "CDM.CS",
+    "BMCI":   "BMCI.CS",
+    "CFG":    "CFG.CS",
+    "WAA":    "WAA.CS",
+    "ACM":    "ACM.CS",
+    "SMI":    "SMI.CS",
+    "MNG":    "MNG.CS",
+    "CMT":    "CMT.CS",
+    "CMR":    "CMR.CS",
+    "LHM":    "LHM.CS",
+    "TMA":    "TMA.CS",
+    "GAZ":    "GAZ.CS",
+    "TQM":    "TQM.CS",
+    "SBM":    "SBM.CS",
+    "OUL":    "OUL.CS",
+    "LES":    "LES.CS",
+    "CSR":    "CSR.CS",
+    "MUT":    "MUT.CS",
+    "LBV":    "LBV.CS",
+    "ADH":    "ADH.CS",
+    "ALM":    "ALM.CS",
+    "DHO":    "DHO.CS",
+    "RDS":    "RDS.CS",
+    "SID":    "SID.CS",
+    "CTM":    "CTM.CS",
+    "RIS":    "RIS.CS",
+    "MSA":    "MSA.CS",
+    "HPS":    "HPS.CS",
+    "M2M":    "M2M.CS",
+    "TGCC":   "TGCC.CS",
+    "JET":    "JET.CS",
+    "DISWAY": "DISWAY.CS",
+    "DISTY":  "DISTY.CS",
+    "SLF":    "SLF.CS",
+    "AFMA":   "AFMA.CS",
+    "EQD":    "EQD.CS",
+    "MAL":    "MAL.CS",
+    "PRO":    "PRO.CS",
+    "SNEP":   "SNEP.CS",
+    "MOX":    "MOX.CS",
+}
+
+_YAHOO_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+
+
+def fetch_yahoo_price(ticker):
+    """
+    Fetch real-time price + previous close from Yahoo Finance.
+    Returns dict with 'cours', 'cours_veille', 'variation' or None on failure.
+    Timeout: 5s total. No auth required.
+    """
+    symbol = _YAHOO_OVERRIDES.get(ticker, ticker + ".CS")
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=1d&interval=1d"
+    try:
+        r = requests.get(url, headers=_YAHOO_HEADERS, timeout=(3, 5))
+        r.raise_for_status()
+        meta = r.json()["chart"]["result"][0]["meta"]
+        price = meta.get("regularMarketPrice")
+        prev  = meta.get("previousClose") or meta.get("chartPreviousClose")
+        if price:
+            variation = ((price - prev) / prev * 100) if prev else None
+            print(f"[YAHOO] {ticker} ({symbol}) = {price} MAD")
+            return {"cours": price, "cours_veille": prev, "variation": variation}
+    except Exception as e:
+        print(f"[YAHOO] {ticker} failed: {e}")
+    return None
+
+
 def _fr_num(s):
     """Convert French-formatted number string to float. '2 000,00' → 2000.0"""
     if s is None:
@@ -730,7 +808,10 @@ def analyze():
 
         sector = SECTORS.get(ticker, "Secteur divers")
 
-        # Try boursenews first
+        # 1. Yahoo Finance — real-time price (fast, reliable, pure JSON)
+        yp = fetch_yahoo_price(ticker)
+
+        # 2. Boursenews — fundamentals, ratios, technicals
         sd = None
         slug = BOURSENEWS_SLUGS.get(ticker)
         if slug:
@@ -743,6 +824,17 @@ def analyze():
         else:
             print(f"[WARN] No boursenews slug for {ticker}")
             sd = {"source": "none", "data_available": False}
+
+        # 3. Override cours/variation with Yahoo price (authoritative)
+        if yp:
+            if sd is None:
+                sd = {}
+            sd["cours"]       = yp["cours"]
+            sd["variation"]   = yp.get("variation")
+            sd["cours_veille"] = yp.get("cours_veille")
+            sd["prix_source"] = "Yahoo Finance"
+            if sd.get("source") == "none":
+                sd["source"] = "yahoo"
 
         analysis = generate_analysis(ticker, sector, sd)
 
