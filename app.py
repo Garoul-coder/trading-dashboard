@@ -375,10 +375,12 @@ def scrape_boursenews(slug):
     # Page text lines — iterate to find labelled values
     lines = [ln.strip() for ln in soup.get_text(separator="\n").split("\n") if ln.strip()]
 
-    def val_after(label, max_offset=4):
+    def val_after(label, max_offset=4, exclude=None):
         label_l = label.lower()
+        excl_l  = [e.lower() for e in (exclude or [])]
         for i, ln in enumerate(lines):
-            if label_l in ln.lower():
+            ln_l = ln.lower()
+            if label_l in ln_l and not any(e in ln_l for e in excl_l):
                 for j in range(1, max_offset + 1):
                     if i + j < len(lines):
                         v = _fr_num(lines[i + j])
@@ -386,7 +388,7 @@ def scrape_boursenews(slug):
                             return v
         return None
 
-    result["cours"]      = val_after("Cours")
+    result["cours"]      = val_after("Cours", exclude=["cible", "variation", "haut", "bas", "ouverture", "offre", "demande"])
     result["variation"]  = val_after("Var (%)")  or val_after("Var.")
     result["volume"]     = val_after("Volumes")  or val_after("Volume")
     result["haut"]       = val_after("+ Haut")   or val_after("Haut")
