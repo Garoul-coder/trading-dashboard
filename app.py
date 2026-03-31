@@ -4,7 +4,13 @@ import requests
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify
 import anthropic
-from bs4 import BeautifulSoup
+
+try:
+    from bs4 import BeautifulSoup
+    _BS4_OK = True
+except ImportError:
+    _BS4_OK = False
+    print("[WARN] beautifulsoup4 non disponible — scraping désactivé")
 
 app = Flask(__name__)
 
@@ -350,6 +356,9 @@ def scrape_boursenews(slug):
     Returns a dict ready to be serialised as JSON.
     Timeout: 20s. Uses html.parser (no lxml dependency).
     """
+    if not _BS4_OK:
+        raise RuntimeError("beautifulsoup4 non installé")
+
     url = f"https://boursenews.ma/action/{slug}"
     try:
         resp = requests.get(url, headers=_BN_HEADERS, timeout=20)
@@ -720,6 +729,18 @@ Règles : français uniquement · bullet points · utilise les données chiffré
 # ---------------------------------------------------------------------------
 # Flask routes
 # ---------------------------------------------------------------------------
+
+# Garantit que toutes les erreurs Flask retournent du JSON (jamais du HTML)
+@app.errorhandler(Exception)
+def handle_any_exception(e):
+    print(f"[ERROR] Unhandled: {e}")
+    return jsonify({"error": str(e)}), 500
+
+@app.errorhandler(404)
+def handle_404(e):
+    return jsonify({"error": "Route non trouvée"}), 404
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
