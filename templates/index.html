@@ -258,6 +258,7 @@
       <div class="ms-auto text-end">
         <div id="rChange1mo" class="fw-bold fs-5"></div>
         <small class="text-secondary">1 mois</small>
+        <div class="mt-1"><span id="rSource" class="badge" style="font-size:.65rem;opacity:.7"></span></div>
       </div>
     </div>
 
@@ -360,6 +361,18 @@ function renderResults(data) {
   const sd = data.stock_data;
   document.getElementById('rTicker').textContent = data.ticker;
   document.getElementById('rSector').textContent = data.sector;
+
+  // Source badge
+  const srcEl = document.getElementById('rSource');
+  if (data.data_source === 'medias24') {
+    srcEl.textContent = '✓ BVC via medias24';
+    srcEl.style.background = 'rgba(0,132,61,.5)';
+  } else if (data.data_source === 'yahoo') {
+    srcEl.textContent = '◎ Yahoo Finance';
+    srcEl.style.background = 'rgba(100,100,100,.4)';
+  } else {
+    srcEl.textContent = '';
+  }
 
   if (sd && sd.data_available) {
     document.getElementById('rPrice').textContent = `${sd.current_price} MAD`;

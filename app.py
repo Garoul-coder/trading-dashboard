@@ -1,6 +1,6 @@
 import os
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify
 import anthropic
 
@@ -34,6 +34,65 @@ BVC_TICKERS = {
     "SID": "SID.CS", "CCAR": "CCAR.CS", "SNEP": "SNEP.CS", "PRO": "PRO.CS",
     # Transport & Services publics
     "CTM": "CTM.CS", "RIS": "RIS.CS", "LYDEC": "LYDEC.CS", "TIMAR": "TIMAR.CS",
+}
+
+# Mapping ticker BVC → ISIN (source : BVCscrap/Notation.py + BVC officiel)
+BVC_ISIN = {
+    # Banques
+    "ATW":    "MA0000012445",  # Attijariwafa Bank
+    "BCP":    "MA0000011884",  # Banque Centrale Populaire
+    "CIH":    "MA0000011454",  # CIH Bank
+    "BOA":    "MA0000012437",  # Bank of Africa (BMCE)
+    "CDM":    "MA0000010381",  # Crédit du Maroc
+    "BMCI":   "MA0000010811",  # BMCI (BNP Paribas Maroc)
+    # Assurances & Financières
+    "WAA":    "MA0000010928",  # Wafa Assurance
+    "ACM":    "MA0000011710",  # Atlanta (ATLANTASANAD)
+    "SLF":    "MA0000011744",  # Salafin
+    "AFMA":   "MA0000012296",  # AFMA
+    # Télécoms & Technologies
+    "IAM":    "MA0000011488",  # Maroc Telecom
+    "M2M":    "MA0000011678",  # M2M Group
+    "HPS":    "MA0000011611",  # HPS
+    "DISWAY": "MA0000011637",  # Disway
+    "INVOLYS":"MA0000011579",  # Involys
+    # Mines
+    "SMI":    "MA0000010068",  # SMI
+    "MNG":    "MA0000011058",  # Managem
+    # Ciment & BTP
+    "CMR":    "MA0000010506",  # Ciments du Maroc
+    "LHM":    "MA0000012320",  # LafargeHolcim Maroc
+    "STROC":  "MA0000012056",  # Stroc Industrie
+    # Énergie
+    "TMA":    "MA0000012205",  # TAQA Morocco
+    "GAZ":    "MA0000010951",  # Afriquia Gaz
+    "TQM":    "MA0000012262",  # Total Maroc
+    "MOX":    "MA0000010985",  # Maghreb Oxygène
+    # Agroalimentaire
+    "SBM":    "MA0000010365",  # Ste Boissons du Maroc
+    "OUL":    "MA0000010415",  # Oulmès
+    "FBR":    "MA0000011421",  # Dari Couspate
+    "LES":    "MA0000012031",  # Lesieur Cristal
+    "CSR":    "MA0000012247",  # Cosumar
+    "MUT":    "MA0000012395",  # Mutandis
+    # Distribution
+    "LBV":    "MA0000011801",  # Label Vie
+    # Automobile
+    "ALM":    "MA0000011009",  # Auto Nejma
+    "ADH":    "MA0000010969",  # Auto Hall
+    # Immobilier
+    "DHO":    "MA0000011512",  # Addoha
+    "AGC":    "MA0000011819",  # Alliances Développement
+    "RDS":    "MA0000012239",  # Résidences Dar Saada
+    # Industrie
+    "SID":    "MA0000010019",  # Sonasid
+    "CCAR":   "MA0000011868",  # Cartier Saada
+    "PRO":    "MA0000011660",  # Promopharm
+    "SNEP":   "MA0000011728",  # SNEP
+    # Transport & Services
+    "CTM":    "MA0000010340",  # CTM
+    "RIS":    "MA0000011462",  # Risma
+    "TIMAR":  "MA0000011686",  # Timar
 }
 
 SECTORS = {
@@ -250,78 +309,168 @@ def calc_rsi(closes, period=14):
     return round(100 - 100 / (1 + rs), 2)
 
 
-def get_weekly_data(ticker):
+_M24_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Referer":    "https://medias24.com/",
+    "Accept":     "application/json, text/plain, */*",
+}
+
+
+def _build_weekly_result(dates, closes, volumes, source):
+    """Build the standard weekly result dict from sorted daily arrays."""
+    current  = closes[-1]
+    n        = len(closes)
+    return {
+        "data_available": True,
+        "source":         source,
+        "current_price":  current,
+        "change_1mo":  round((current - closes[-4])  / closes[-4]  * 100, 2) if n >= 4  else None,
+        "change_3mo":  round((current - closes[-13]) / closes[-13] * 100, 2) if n >= 13 else None,
+        "change_1y":   round((current - closes[0])   / closes[0]   * 100, 2),
+        "ma10":  moving_avg(closes, 10),
+        "ma20":  moving_avg(closes, 20),
+        "ma50":  moving_avg(closes, 50),
+        "rsi":   calc_rsi(closes),
+        "high_52w": round(max(closes), 2),
+        "low_52w":  round(min(closes), 2),
+        "chart_data": {"dates": dates, "prices": closes, "volumes": volumes},
+    }
+
+
+def get_weekly_data_medias24(isin):
+    """Fetch 1-year daily history from medias24.com and aggregate to weekly closes."""
+    end_dt   = datetime.utcnow()
+    start_dt = end_dt - timedelta(days=370)
+    url = (
+        "https://medias24.com/content/api?method=getPriceHistory"
+        f"&ISIN={isin}&format=json"
+        f"&from={start_dt.strftime('%Y-%m-%d')}"
+        f"&to={end_dt.strftime('%Y-%m-%d')}"
+    )
+    resp = requests.get(url, headers=_M24_HEADERS, timeout=15)
+    resp.raise_for_status()
+    raw = resp.json()
+
+    # Normalise: accept list or dict wrapping
+    rows = raw if isinstance(raw, list) else None
+    if rows is None and isinstance(raw, dict):
+        for key in ("content", "data", "prices", "history", "result"):
+            val = raw.get(key)
+            if isinstance(val, list):
+                rows = val
+                break
+            if isinstance(val, dict):
+                for v2 in val.values():
+                    if isinstance(v2, list):
+                        rows = v2
+                        break
+    if not rows:
+        return None
+
+    # Parse each daily record (field names vary by API version)
+    daily = []
+    for row in rows:
+        date_s  = (row.get("d") or row.get("Date") or row.get("date") or
+                   row.get("Timestamp") or "")
+        close_v = (row.get("v") or row.get("Value") or row.get("value") or
+                   row.get("Close") or row.get("close"))
+        vol_v   = (row.get("vol") or row.get("Vol") or row.get("Volume") or
+                   row.get("volume") or 0)
+        if not date_s or close_v is None:
+            continue
+        try:
+            daily.append((str(date_s)[:10], round(float(close_v), 2), int(float(vol_v or 0))))
+        except (ValueError, TypeError):
+            continue
+
+    if len(daily) < 4:
+        return None
+
+    daily.sort(key=lambda x: x[0])
+
+    # Keep last close of each ISO week → weekly series
+    weekly = {}
+    for date_s, close_v, vol_i in daily:
+        try:
+            dt       = datetime.strptime(date_s, "%Y-%m-%d")
+            week_key = dt.strftime("%G-W%V")        # ISO week
+            weekly[week_key] = (date_s, close_v, vol_i)
+        except ValueError:
+            continue
+
+    if len(weekly) < 4:
+        return None
+
+    sorted_w = sorted(weekly.items())
+    dates   = [v[0] for _, v in sorted_w]
+    closes  = [v[1] for _, v in sorted_w]
+    volumes = [v[2] for _, v in sorted_w]
+    return _build_weekly_result(dates, closes, volumes, "medias24")
+
+
+def get_weekly_data_yahoo(ticker):
+    """Fetch 1-year weekly data from Yahoo Finance (fallback)."""
     yf_ticker = BVC_TICKERS.get(ticker, f"{ticker}.CS")
     url = (
         f"https://query1.finance.yahoo.com/v8/finance/chart/{yf_ticker}"
         f"?interval=1wk&range=1y"
     )
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    try:
-        resp = requests.get(url, headers=headers, timeout=15)
-        resp.raise_for_status()
-        payload = resp.json()
+    resp = requests.get(url, headers=headers, timeout=15)
+    resp.raise_for_status()
+    payload = resp.json()
 
-        result = payload["chart"]["result"]
-        if not result:
-            return {"data_available": False}
+    result = payload["chart"]["result"]
+    if not result:
+        return None
 
-        r = result[0]
-        timestamps = r.get("timestamp", [])
-        quotes = r["indicators"]["quote"][0]
-        closes_raw = quotes.get("close", [])
-        volumes_raw = quotes.get("volume", [])
+    r          = result[0]
+    timestamps = r.get("timestamp", [])
+    quotes     = r["indicators"]["quote"][0]
+    closes_raw = quotes.get("close", [])
+    volumes_raw= quotes.get("volume", [])
 
-        # Filter nulls
-        rows = [
-            (t, c, v or 0)
+    rows = [(t, c, v or 0)
             for t, c, v in zip(timestamps, closes_raw, volumes_raw)
-            if c is not None
-        ]
-        if len(rows) < 4:
-            return {"data_available": False}
+            if c is not None]
+    if len(rows) < 4:
+        return None
 
-        dates   = [datetime.utcfromtimestamp(t).strftime("%Y-%m-%d") for t, c, v in rows]
-        closes  = [round(c, 2) for t, c, v in rows]
-        volumes = [int(v) for t, c, v in rows]
+    dates   = [datetime.utcfromtimestamp(t).strftime("%Y-%m-%d") for t, c, v in rows]
+    closes  = [round(c, 2) for t, c, v in rows]
+    volumes = [int(v)      for t, c, v in rows]
+    return _build_weekly_result(dates, closes, volumes, "yahoo")
 
-        current = closes[-1]
-        high_52w = round(max(closes), 2)
-        low_52w  = round(min(closes), 2)
 
-        change_1mo = round((current - closes[-4])  / closes[-4]  * 100, 2) if len(closes) >= 4  else None
-        change_3mo = round((current - closes[-13]) / closes[-13] * 100, 2) if len(closes) >= 13 else None
-        change_1y  = round((current - closes[0])   / closes[0]   * 100, 2)
+def get_weekly_data(ticker):
+    """Try medias24 first (données BVC réelles), fallback Yahoo Finance."""
+    isin = BVC_ISIN.get(ticker)
+    if isin:
+        try:
+            result = get_weekly_data_medias24(isin)
+            if result:
+                print(f"[DATA] {ticker} → medias24 ({len(result['chart_data']['prices'])} semaines)")
+                return result
+        except Exception as e:
+            print(f"[WARN] medias24 failed for {ticker} ({isin}): {e}")
 
-        ma10 = moving_avg(closes, 10)
-        ma20 = moving_avg(closes, 20)
-        ma50 = moving_avg(closes, 50)
-        rsi  = calc_rsi(closes)
-
-        return {
-            "data_available": True,
-            "current_price": current,
-            "change_1mo": change_1mo,
-            "change_3mo": change_3mo,
-            "change_1y": change_1y,
-            "ma10": ma10,
-            "ma20": ma20,
-            "ma50": ma50,
-            "rsi": rsi,
-            "high_52w": high_52w,
-            "low_52w": low_52w,
-            "chart_data": {"dates": dates, "prices": closes, "volumes": volumes},
-        }
+    try:
+        result = get_weekly_data_yahoo(ticker)
+        if result:
+            print(f"[DATA] {ticker} → Yahoo Finance")
+            return result
     except Exception as e:
-        print(f"[ERROR] get_weekly_data({ticker}): {e}")
-        return {"data_available": False}
+        print(f"[ERROR] Yahoo Finance failed for {ticker}: {e}")
+
+    return {"data_available": False}
 
 
 def generate_analysis(ticker, sector, sd):
     if sd and sd.get("data_available"):
+        source_label = "Bourse de Casablanca via medias24" if sd.get("source") == "medias24" else "Yahoo Finance"
         data_context = f"""
-Données de clôture hebdomadaires — 1 an (Yahoo Finance) :
-- Prix de clôture actuel : {sd['current_price']} MAD
+Données de clôture hebdomadaires — 1 an (source : {source_label}) :
+- 💰 Prix de clôture actuel : **{sd['current_price']} MAD**
 - Performance 1 mois    : {sd['change_1mo']:+.2f}%
 - Performance 3 mois    : {sd['change_3mo']:+.2f}%
 - Performance 1 an      : {sd['change_1y']:+.2f}%
@@ -332,8 +481,22 @@ Données de clôture hebdomadaires — 1 an (Yahoo Finance) :
 - Plus haut 52 semaines : {sd['high_52w']} MAD
 - Plus bas  52 semaines : {sd['low_52w']} MAD
 """
+        price_snapshot = f"""
+**💰 COURS ACTUEL : {sd['current_price']} MAD**
+| Indicateur | Valeur |
+|---|---|
+| Cours actuel | **{sd['current_price']} MAD** |
+| Plus haut 52 sem. | {sd['high_52w']} MAD |
+| Plus bas 52 sem. | {sd['low_52w']} MAD |
+| Performance 1 mois | {sd['change_1mo']:+.2f}% |
+| Performance 1 an | {sd['change_1y']:+.2f}% |
+| RSI (14) | {sd['rsi']} |
+| MM20 / MM50 | {sd['ma20']} / {sd['ma50']} MAD |
+
+"""
     else:
         data_context = "Données marché non disponibles. Formule des hypothèses réalistes basées sur le contexte du marché marocain."
+        price_snapshot = ""
 
     company_context = get_company_context(ticker)
     company_section = f"\n{company_context}\n" if company_context else ""
@@ -348,6 +511,7 @@ Ticker : **{ticker}** | Secteur : {sector}
 Génère l'analyse complète avec EXACTEMENT cette structure :
 
 ## 🔎 1. Présentation de la société
+{price_snapshot}
 Utilise STRICTEMENT la fiche société fournie ci-dessus (si disponible) pour les informations suivantes :
 - Nom complet et activité principale (respecte scrupuleusement la description fournie)
 - Groupe d'appartenance et actionnariat
@@ -450,10 +614,11 @@ def analyze():
         analysis = generate_analysis(ticker, sector, sd)
 
         return jsonify({
-            "ticker": ticker,
-            "sector": sector,
+            "ticker":     ticker,
+            "sector":     sector,
             "stock_data": sd,
-            "analysis": analysis,
+            "analysis":   analysis,
+            "data_source": sd.get("source", "none") if sd else "none",
         })
     except Exception as e:
         print(f"[ERROR] /analyze: {e}")
