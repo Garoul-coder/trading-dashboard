@@ -13,6 +13,17 @@ except ImportError:
     _BS4_OK = False
     print("[WARN] beautifulsoup4 non disponible — scraping désactivé")
 
+try:
+    import cloudscraper
+    _scraper = cloudscraper.create_scraper(
+        browser={"browser": "chrome", "platform": "windows", "mobile": False}
+    )
+    _CLOUDSCRAPER_OK = True
+except ImportError:
+    _scraper = requests
+    _CLOUDSCRAPER_OK = False
+    print("[WARN] cloudscraper non disponible — fallback sur requests")
+
 app = Flask(__name__)
 
 # ---------------------------------------------------------------------------
@@ -369,8 +380,9 @@ def scrape_investing(slug):
 
     url = f"https://fr.investing.com/equities/{slug}"
     try:
-        resp = requests.get(url, headers=_INV_HEADERS, timeout=(5, 12))
+        resp = _scraper.get(url, headers=_INV_HEADERS, timeout=(5, 15))
         resp.raise_for_status()
+        print(f"[INV] HTTP {resp.status_code} — {url}")
     except requests.exceptions.Timeout:
         raise RuntimeError(f"Timeout scraping {url}")
     except requests.exceptions.HTTPError as e:
