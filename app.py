@@ -1,104 +1,90 @@
 import os
 import re
-import json
-import requests
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify
 import anthropic
 
+# BVCscrap — import seulement depuis .tech pour éviter pandas (load.py)
 try:
-    from bs4 import BeautifulSoup
-    _BS4_OK = True
+    from BVCscrap.tech import getCours, getKeyIndicators
+    _BVCSCRAP_OK = True
 except ImportError:
-    _BS4_OK = False
-    print("[WARN] beautifulsoup4 non disponible — scraping désactivé")
-
-try:
-    import cloudscraper
-    _scraper = cloudscraper.create_scraper(
-        browser={"browser": "chrome", "platform": "windows", "mobile": False}
-    )
-    _CLOUDSCRAPER_OK = True
-except ImportError:
-    _scraper = requests
-    _CLOUDSCRAPER_OK = False
-    print("[WARN] cloudscraper non disponible — fallback sur requests")
+    _BVCSCRAP_OK = False
+    print("[WARN] BVCscrap non installé")
 
 app = Flask(__name__)
 
 # ---------------------------------------------------------------------------
-# Mapping ticker BVC → slug fr.investing.com/equities/{slug}
-# Slugs vérifiés depuis https://fr.investing.com/equities/morocco
+# Mapping ticker BVC → nom BVCscrap (notation exacte requise)
+# Source : bvc.notation()  — 74 valeurs supportées
 # ---------------------------------------------------------------------------
-INVESTING_SLUGS = {
+BVC_NAMES = {
     # Banques
-    "ATW":    "attijariwafa-bk",
-    "BCP":    "bcp",
-    "CIH":    "cih",
-    "BOA":    "bmce",
-    "CDM":    "cdm",
-    "BMCI":   "bmci",
-    "CFG":    "cfg-bank",
+    "ATW":    "Attijariwafa",
+    "BCP":    "BCP",
+    "CIH":    "CIH",
+    "BOA":    "BOA",
+    "CDM":    "CDM",
+    "BMCI":   "BMCI",
     # Assurances & Financières
-    "WAA":    "wafa-assurance",
-    "ACM":    "atlanta",
-    "SLF":    "salafin",
-    "AFMA":   "afma-sa",
-    "EQD":    "credit-eqdm",
-    "MAL":    "maroc-leasing",
+    "WAA":    "Wafa Assur",
+    "ACM":    "ATLANTASANAD",
+    "SLF":    "SALAFIN",
+    "AFMA":   "AFMA",
+    "EQD":    "EQDOM",
+    "MAL":    "Maroc Leasing",
     # Télécoms & Tech
-    "IAM":    "itissalat-al-maghrib",
-    "M2M":    "m2m-group",
-    "HPS":    "highteck-payment",
-    "DISWAY": "disway",
-    "DISTY":  "disty-tech",
+    "IAM":    "Maroc Telecom",
+    "M2M":    "M2M Group",
+    "HPS":    "HPS",
+    "DISWAY": "DISWAY",
+    "DISTY":  "Disty Technolog",
     # Mines
-    "SMI":    "smi",
-    "MNG":    "managem",
-    "CMT":    "miniere-touissit",
+    "SMI":    "SMI",
+    "MNG":    "Managem",
+    "CMT":    "CMT",
     # Ciment & BTP
-    "CMR":    "ciments-du-maroc",
-    "LHM":    "lafarge-ciments",
-    "JET":    "jet-alu-maroc-sa",
-    "TGCC":   "casablanca",
+    "CMR":    "Ciments Maroc",
+    "LHM":    "LafargeHolcim",
+    "JET":    "Jet Contractors",
+    "TGCC":   "TGCC",
     # Énergie
-    "TMA":    "jorf-lasfar",
-    "GAZ":    "afriquia-gaz",
-    "TQM":    "total-maroc-sa",
-    "MOX":    "maghreb-oxygene",
+    "TMA":    "TAQA Morocco",
+    "GAZ":    "Afriquia Gaz",
+    "TQM":    "Total Maroc",
+    "MOX":    "Maghreb Oxygene",
     # Agroalimentaire
-    "SBM":    "brasseries-maroc",
-    "OUL":    "oulmes",
-    "LES":    "lesieur",
-    "CSR":    "cosumar",
-    "MUT":    "mutandis",
-    "UNM":    "unimer",
-    "COL":    "colorado",
+    "SBM":    "Ste Boissons",
+    "OUL":    "Oulmes",
+    "LES":    "Lesieur Cristal",
+    "CSR":    "COSUMAR",
+    "MUT":    "Mutandis",
+    "UNM":    "Unimer",
+    "COL":    "Colorado",
     # Distribution
-    "LBV":    "label-vie",
+    "LBV":    "LABEL VIE",
     # Automobile
-    "ADH":    "auto-hall",
+    "ADH":    "Auto Hall",
     # Immobilier
-    "ALM":    "alliances",
-    "DHO":    "addoha",
-    "RDS":    "res-dar-saada",
-    "IMM":    "immorente-invest",
-    "ARA":    "aradei-capital",
+    "ALM":    "Alliances",
+    "DHO":    "Addoha",
+    "RDS":    "Res.Dar Saada",
+    "IMM":    "Immr Invest",
+    "ARA":    "Aradei Capital",
     # Industrie & Chimie
-    "SID":    "sonasid",
-    "PRO":    "promopharm-s.a",
-    "SNEP":   "snep",
-    "SOT":    "sothema",
-    "STK":    "stokvis-nord",
-    "AFI":    "afric-industries",
-    "AKD":    "akdital",
-    "DEL":    "delta-holding",
+    "SID":    "Sonasid",
+    "PRO":    "PROMOPHARM",
+    "SNEP":   "SNEP",
+    "SOT":    "SOTHEMA",
+    "STK":    "Stokvis Nord Afr",
+    "AKD":    "Akdital",
+    "DEL":    "Delta Holding",
     # Transport & Services
-    "CTM":    "ctm-ln",
-    "RIS":    "risma",
-    "MSA":    "marsa-maroc-sa",
+    "CTM":    "CTM",
+    "RIS":    "Risma",
+    "MSA":    "SODEP",
     # Autres
-    "S2M":    "s2m",
+    "S2M":    "S2M",
 }
 
 # ---------------------------------------------------------------------------
@@ -106,7 +92,7 @@ INVESTING_SLUGS = {
 # ---------------------------------------------------------------------------
 SECTORS = {
     "ATW": "Banques", "BCP": "Banques", "CIH": "Banques",
-    "BOA": "Banques", "CDM": "Banques", "BMCI": "Banques", "CFG": "Banques",
+    "BOA": "Banques", "CDM": "Banques", "BMCI": "Banques",
     "WAA": "Assurances", "ACM": "Assurances",
     "SLF": "Services financiers", "AFMA": "Services financiers",
     "EQD": "Crédit à la consommation", "MAL": "Crédit-bail",
@@ -126,7 +112,7 @@ SECTORS = {
     "IMM": "Immobilier", "ARA": "Immobilier",
     "SID": "Industrie sidérurgique", "PRO": "Pharmacie",
     "SNEP": "Industrie chimique", "SOT": "Pharmacie",
-    "STK": "Distribution industrielle", "AFI": "Industrie",
+    "STK": "Distribution industrielle",
     "AKD": "Santé", "DEL": "Industrie",
     "CTM": "Transport", "RIS": "Tourisme & Loisirs", "MSA": "Transport maritime",
     "S2M": "Technologies",
@@ -139,7 +125,7 @@ COMPANY_PROFILES = {
     "SMI": {
         "nom": "Société Métallurgique d'Imiter (SMI)",
         "groupe": "Groupe Managem (filiale)",
-        "activite": "Exploitation de la mine d'argent d'Imiter (Tinghir). Première mine d'argent d'Afrique.",
+        "activite": "Exploitation mine d'argent d'Imiter (Tinghir). 1ère mine d'argent d'Afrique.",
         "concurrents": "Managem (MNG), filiales minières OCP",
         "particularites": "Très sensible au cours international de l'argent (XAG/USD).",
     },
@@ -153,7 +139,7 @@ COMPANY_PROFILES = {
     "ATW": {
         "nom": "Attijariwafa Bank",
         "groupe": "Groupe ONA / SNI",
-        "activite": "Premier groupe bancaire du Maroc, présent dans 27 pays africains.",
+        "activite": "1er groupe bancaire du Maroc, présent dans 27 pays africains.",
         "concurrents": "BCP, BOA, CIH Bank",
         "particularites": "Plus grande capitalisation boursière BVC. Leader crédit Maroc.",
     },
@@ -183,35 +169,21 @@ COMPANY_PROFILES = {
         "groupe": "Groupe FinanceCom (Benjelloun)",
         "activite": "Banque universelle marocaine, présente dans 20+ pays africains.",
         "concurrents": "ATW, BCP",
-        "particularites": "3e groupe bancaire marocain. Pioneer bancaire en Afrique.",
+        "particularites": "3e groupe bancaire marocain.",
     },
     "HPS": {
         "nom": "Hightech Payment Systems (HPS)",
         "groupe": "Indépendant",
         "activite": "Éditeur logiciels paiement électronique (PowerCARD). 90+ pays.",
         "concurrents": "Fiserv, FIS, Temenos",
-        "particularites": "Champion marocain fintech international. Revenus récurrents.",
+        "particularites": "Champion marocain fintech international.",
     },
     "TMA": {
         "nom": "Taqa Morocco",
         "groupe": "TAQA Abu Dhabi (72,6%)",
         "activite": "Production électricité centrale Jorf Lasfar (2 760 MW). Vente à l'ONEE.",
         "concurrents": "ONEE, autres IPP",
-        "particularites": "Contrat PPA long terme. Revenus stables. Fort rendement dividende.",
-    },
-    "CMR": {
-        "nom": "Ciments du Maroc",
-        "groupe": "Heidelberg Materials",
-        "activite": "Production ciment, béton, granulats. 2e cimentier Maroc.",
-        "concurrents": "LafargeHolcim Maroc, Asment, Cimat",
-        "particularites": "Bénéficiaire Mondial 2030 et reconstruction post-séisme.",
-    },
-    "LHM": {
-        "nom": "LafargeHolcim Maroc",
-        "groupe": "Holcim Group (Suisse)",
-        "activite": "1er cimentier Maroc. Ciment, béton, granulats, mortiers.",
-        "concurrents": "Ciments du Maroc, Asment, Cimat",
-        "particularites": "Stratégie décarbonation. Levier grands chantiers infrastructure.",
+        "particularites": "Contrat PPA long terme. Fort rendement dividende.",
     },
     "GAZ": {
         "nom": "Afriquia Gaz",
@@ -224,36 +196,8 @@ COMPANY_PROFILES = {
         "nom": "Wafa Assurance",
         "groupe": "Attijariwafa Bank (filiale)",
         "activite": "Assurance multibranche : vie, non-vie, santé, crédit.",
-        "concurrents": "RMA, Saham Assurance (Sanlam), AXA Maroc",
+        "concurrents": "RMA, Saham Assurance, AXA Maroc",
         "particularites": "Leader assurance Maroc. Synergie ATW.",
-    },
-    "SBM": {
-        "nom": "Société des Boissons du Maroc",
-        "groupe": "Castel Group (France)",
-        "activite": "Bières (Flag, Casablanca, Heineken licence), eaux (Sidi Ali).",
-        "concurrents": "CBGN, Coca-Cola Maroc",
-        "particularites": "Fort pricing power. Dividende généreux.",
-    },
-    "DHO": {
-        "nom": "Douja Promotion Groupe Addoha",
-        "groupe": "Famille Anas Sefrioui",
-        "activite": "1er promoteur immobilier Maroc. Logement social, économique, haut standing.",
-        "concurrents": "Alliances, Résidences Dar Saada",
-        "particularites": "Sensible politiques logement social. Restructuration dette en cours.",
-    },
-    "LES": {
-        "nom": "Lesieur Cristal",
-        "groupe": "OCP / Sofiprotéol",
-        "activite": "Huiles alimentaires (Lesieur, Huilor), savons, margarines.",
-        "concurrents": "Aicha, importations",
-        "particularites": "Leader huiles alimentaires Maroc. Sensible cours oléagineux.",
-    },
-    "CSR": {
-        "nom": "Cosumar",
-        "groupe": "Groupe Al Mada",
-        "activite": "Sucrerie du Maroc. Extraction et raffinage sucre.",
-        "concurrents": "Importations",
-        "particularites": "Quasi-monopole sucre raffiné. Prix encadrés État.",
     },
     "LBV": {
         "nom": "Label'Vie",
@@ -262,40 +206,19 @@ COMPANY_PROFILES = {
         "concurrents": "Marjane, Aswak Assalam, BIM",
         "particularites": "Forte croissance réseau. Concept Atacadão en expansion.",
     },
-    "SID": {
-        "nom": "Sonasid",
-        "groupe": "ArcelorMittal",
-        "activite": "Acier long (ronds à béton, fil machine). Principal sidérurgiste marocain.",
-        "concurrents": "Importations acier, Maghreb Steel",
-        "particularites": "Sensible cours mondiaux acier/ferraille.",
+    "CSR": {
+        "nom": "Cosumar",
+        "groupe": "Groupe Al Mada",
+        "activite": "Sucrerie du Maroc. Extraction et raffinage sucre.",
+        "concurrents": "Importations",
+        "particularites": "Quasi-monopole sucre raffiné. Prix encadrés État.",
     },
-    "ADH": {
-        "nom": "Auto Hall",
-        "groupe": "Groupe Holmarcom",
-        "activite": "Distribution automobile : Ford, Mitsubishi, Volvo, Iveco.",
-        "concurrents": "Auto Nejma, Sopriam, SMEIA",
-        "particularites": "1er distributeur automobile Maroc.",
-    },
-    "MSA": {
-        "nom": "Marsa Maroc",
-        "groupe": "État marocain (actionnaire principal)",
-        "activite": "Exploitation et développement des ports marocains.",
-        "concurrents": "Opérateurs portuaires internationaux",
-        "particularites": "Levier direct sur croissance commerce extérieur marocain.",
-    },
-    "RIS": {
-        "nom": "Risma",
-        "groupe": "Groupe Accor",
-        "activite": "Gestion hôtelière Maroc. Ibis, Novotel, Mercure, Sofitel.",
-        "concurrents": "Hôtels indépendants, Marriott, Hilton",
-        "particularites": "Bénéficiaire tourisme marocain et Mondial 2030.",
-    },
-    "OUL": {
-        "nom": "Les Eaux Minérales d'Oulmès",
-        "groupe": "Groupe Holmarcom",
-        "activite": "Eaux minérales (Sidi Ali, Oulmès), boissons gazeuses (Coca-Cola licence).",
-        "concurrents": "SBM, Ain Saïss",
-        "particularites": "Leader eaux minérales et boissons gazeuses. Franchise Coca-Cola.",
+    "DHO": {
+        "nom": "Douja Promotion Groupe Addoha",
+        "groupe": "Famille Anas Sefrioui",
+        "activite": "1er promoteur immobilier Maroc. Logement social, économique, haut standing.",
+        "concurrents": "Alliances, Résidences Dar Saada",
+        "particularites": "Sensible politiques logement social.",
     },
     "AKD": {
         "nom": "Akdital",
@@ -304,6 +227,13 @@ COMPANY_PROFILES = {
         "concurrents": "Clinimaroc, cliniques indépendantes",
         "particularites": "Forte croissance. Seul acteur santé privé coté BVC.",
     },
+    "MSA": {
+        "nom": "Marsa Maroc (SODEP)",
+        "groupe": "État marocain",
+        "activite": "Exploitation et développement des ports marocains.",
+        "concurrents": "Opérateurs portuaires internationaux",
+        "particularites": "Levier direct sur croissance commerce extérieur marocain.",
+    },
 }
 
 
@@ -311,209 +241,105 @@ def get_company_context(ticker):
     p = COMPANY_PROFILES.get(ticker)
     if not p:
         return ""
-    lines = [
-        f"- Nom complet    : {p['nom']}",
-        f"- Groupe         : {p['groupe']}",
-        f"- Activité       : {p['activite']}",
-        f"- Concurrents    : {p['concurrents']}",
-        f"- Particularités : {p['particularites']}",
-    ]
-    return "Fiche société :\n" + "\n".join(lines)
+    return (
+        "Fiche société :\n"
+        f"- Nom          : {p['nom']}\n"
+        f"- Groupe       : {p['groupe']}\n"
+        f"- Activité     : {p['activite']}\n"
+        f"- Concurrents  : {p['concurrents']}\n"
+        f"- Particularités: {p['particularites']}"
+    )
 
 
 # ---------------------------------------------------------------------------
-# Scraper fr.investing.com
+# Parsing des valeurs retournées par BVCscrap (format français variable)
 # ---------------------------------------------------------------------------
-_INV_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-    ),
-    "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Referer": "https://fr.investing.com/",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Connection": "keep-alive",
-    "Upgrade-Insecure-Requests": "1",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "same-origin",
-    "Cache-Control": "max-age=0",
-}
-
-
-def _inv_num(s):
+def _bvc_num(s):
     """
-    Parse investing.com French-format numbers.
-    '6.734,00' → 6734.0  |  '10,07B' → 10070000000  |  '+10,00%' → 10.0
+    Parse une valeur retournée par BVCscrap.
+    Gère : float/int natif, "6 734,00", "6.734,00", "+2,35%", "N/A", None.
     """
     if s is None:
         return None
-    s = str(s).strip().replace("\xa0", "").replace("\u202f", "").replace(" ", "")
-    mult = 1
-    su = s.upper()
-    if su.endswith('B'):
-        mult = 1_000_000_000
-        s = s[:-1]
-    elif su.endswith('M') and not su.endswith('MAD'):
-        mult = 1_000_000
-        s = s[:-1]
-    # French: dots = thousands separator, comma = decimal → remove dots, comma→dot
-    s = s.replace('.', '').replace(',', '.')
-    s = re.sub(r'[^\d.\-]', '', s)
+    if isinstance(s, (int, float)):
+        return float(s)
+    s = str(s).strip()
+    if s in ("", "N/A", "—", "-", "n/a"):
+        return None
+    # Supprimer unités et espaces spéciaux
+    s = s.replace("\xa0", "").replace("\u202f", "").replace(" ", "")
+    s = re.sub(r"[MADmad%]", "", s)
+    # Format français : point = séparateur milliers, virgule = décimale
+    s = s.replace(".", "").replace(",", ".")
+    s = re.sub(r"[^\d.\-]", "", s)
     try:
-        return float(s) * mult if s not in ('', '.') else None
+        return float(s) if s not in ("", ".") else None
     except ValueError:
         return None
 
 
-def scrape_investing(slug):
+# ---------------------------------------------------------------------------
+# Fetch données BVC via BVCscrap
+# ---------------------------------------------------------------------------
+def fetch_bvc_data(name):
     """
-    Scrape fr.investing.com/equities/{slug}.
-    Extracts: cours, variation, haut, bas, volume, ouverture, clot_precedent,
-              haut_52s, bas_52s, per, bpa, capitalisation, rendement, roe, roa,
-              marge_brute, rsi, cours_cible.
-    Returns a dict. Raises RuntimeError on failure.
+    Appelle getCours() + getKeyIndicators() depuis BVCscrap.
+    Retourne un dict unifié prêt pour Claude.
     """
-    if not _BS4_OK:
-        raise RuntimeError("beautifulsoup4 non installé")
+    if not _BVCSCRAP_OK:
+        raise RuntimeError("BVCscrap non installé")
 
-    url = f"https://fr.investing.com/equities/{slug}"
+    result = {"source": "bvcscrap", "name": name,
+               "scraped_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")}
+
+    # ── 1. Données de séance ─────────────────────────────────────────────────
     try:
-        resp = _scraper.get(url, headers=_INV_HEADERS, timeout=(5, 15))
-        resp.raise_for_status()
-        print(f"[INV] HTTP {resp.status_code} — {url}")
-    except requests.exceptions.Timeout:
-        raise RuntimeError(f"Timeout scraping {url}")
-    except requests.exceptions.HTTPError as e:
-        raise RuntimeError(f"HTTP {e.response.status_code} scraping {url}")
+        raw = getCours(name)
+        seance = raw.get("Données_Seance", {})
 
-    soup = BeautifulSoup(resp.text, "html.parser")
-    result = {
-        "source":     "investing",
-        "url":        url,
-        "scraped_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
-    }
+        result["cours"]          = _bvc_num(seance.get("Cours"))
+        result["variation"]      = _bvc_num(seance.get("Variation"))
+        result["ouverture"]      = _bvc_num(seance.get("Ouverture"))
+        result["haut"]           = _bvc_num(seance.get("Plus haut"))
+        result["bas"]            = _bvc_num(seance.get("Plus bas"))
+        result["clot_precedent"] = _bvc_num(seance.get("Cours de cloture veille"))
+        result["volume"]         = _bvc_num(seance.get("Volume en titres"))
+        result["capitalisation"] = _bvc_num(seance.get("Capitalisation"))
 
-    # ── 1. Prix : essai via data-test (nouveau UI investing.com) ─────────────
-    price_el = soup.find(attrs={"data-test": "instrument-price-last"})
-    if price_el:
-        result["cours"] = _inv_num(price_el.get_text(strip=True))
+        # Dernières 5 séances
+        seance_prec = raw.get("Seance_prec", {})
+        if seance_prec:
+            result["seance_prec"] = seance_prec
 
-    var_el = soup.find(attrs={"data-test": "instrument-price-change-percent"})
-    if var_el:
-        result["variation"] = _inv_num(
-            var_el.get_text(strip=True).strip("()%")
+        print(
+            f"[BVC] getCours({name}) → cours={result.get('cours')}, "
+            f"var={result.get('variation')}, vol={result.get('volume')}"
         )
+    except Exception as e:
+        print(f"[BVC] getCours({name}) FAILED: {e}")
 
-    # ── 2. Essai via __NEXT_DATA__ JSON ──────────────────────────────────────
-    if not result.get("cours"):
-        nd = soup.find("script", {"id": "__NEXT_DATA__"})
-        if nd and nd.string:
-            try:
-                data = json.loads(nd.string)
-                props = data.get("props", {}).get("pageProps", {})
-                for path in [
-                    ["instrumentData", "last"],
-                    ["priceData", "last"],
-                    ["data", "last"],
-                ]:
-                    val = props
-                    for key in path:
-                        if isinstance(val, dict):
-                            val = val.get(key)
-                    if val is not None:
-                        result["cours"] = _inv_num(str(val))
-                        break
-            except Exception:
-                pass
+    # ── 2. Indicateurs clés (fondamentaux + ratios) ──────────────────────────
+    try:
+        ind = getKeyIndicators(name)
 
-    # ── 3. Parsing texte (fallback universel) ─────────────────────────────────
-    lines = [ln.strip() for ln in soup.get_text(separator="\n").split("\n") if ln.strip()]
+        # Chiffres clés (3 années)
+        ck = ind.get("Chiffres_cles", {})
+        result["chiffres_cles"] = ck   # Annee, CA, Resultat_net, etc.
 
-    def val_after(label, max_offset=3, exclude=None):
-        label_l = label.lower()
-        excl_l  = [e.lower() for e in (exclude or [])]
-        for i, ln in enumerate(lines):
-            ln_l = ln.lower()
-            if label_l in ln_l and not any(e in ln_l for e in excl_l):
-                for j in range(1, max_offset + 1):
-                    if i + j < len(lines):
-                        v = _inv_num(lines[i + j])
-                        if v is not None and v > 0:
-                            return v
-        return None
+        # Ratios (3 années)
+        rat = ind.get("Ratio", {})
+        result["ratios"] = rat          # Annee, PER, BPA, ROE, PBR, DY, Payout
 
-    def range_val(label):
-        """Parse 'X,XX - Y,YY' → (low, high)"""
-        label_l = label.lower()
-        for i, ln in enumerate(lines):
-            if label_l in ln.lower():
-                for j in range(1, 5):
-                    if i + j < len(lines):
-                        m = re.search(r'([\d.,]+)\s*[-–]\s*([\d.,]+)', lines[i + j])
-                        if m:
-                            return _inv_num(m.group(1)), _inv_num(m.group(2))
-        return None, None
+        # Actionnaires
+        result["actionnaires"] = ind.get("Actionnaires", {})
 
-    # Prix depuis le texte si pas trouvé via data-test
-    if not result.get("cours"):
-        for ln in lines[:40]:
-            v = _inv_num(ln)
-            if v and v > 50:   # toutes les valeurs BVC sont > 50 MAD
-                result["cours"] = v
-                break
+        # Info société (ISIN, secteur, siège, etc.)
+        result["info_societe"] = ind.get("Info_Societe", {})
 
-    # Variation depuis le texte
-    if not result.get("variation"):
-        for ln in lines[:40]:
-            m = re.search(r'\(([+-]?\d+[.,]\d+)%\)', ln)
-            if m:
-                result["variation"] = _inv_num(m.group(1))
-                break
+        print(f"[BVC] getKeyIndicators({name}) → ratios={list(rat.keys())}")
+    except Exception as e:
+        print(f"[BVC] getKeyIndicators({name}) FAILED: {e}")
 
-    # Haut / Bas journalier
-    bas, haut = range_val("Ecart journalier")
-    if not (bas and haut):
-        bas, haut = range_val("Fourchette journalière")
-    if haut:
-        result["haut"] = haut
-    if bas:
-        result["bas"] = bas
-
-    # 52 semaines
-    bas52, haut52 = range_val("Ecart 52")
-    if not (bas52 and haut52):
-        bas52, haut52 = range_val("52 sem")
-    if haut52:
-        result["haut_52s"] = haut52
-    if bas52:
-        result["bas_52s"] = bas52
-
-    # Volume
-    result["volume"]       = val_after("Volume", exclude=["moyen", "échangé moyen"])
-    result["volume_moyen"] = val_after("Volume moyen")
-
-    # Données séance
-    result["ouverture"]      = val_after("Ouverture")
-    result["clot_precedent"] = val_after("Clôture précédente") or val_after("Cloture précédente")
-
-    # Métriques financières
-    result["per"]          = val_after("P/E Ratio") or val_after("PER")
-    result["bpa"]          = val_after("BPA")
-    result["rendement"]    = val_after("Rendement")
-    result["capitalisation"] = val_after("Capitalisation")
-    result["roe"]          = val_after("ROE")
-    result["roa"]          = val_after("ROA")
-    result["marge_brute"]  = val_after("Marge brute")
-    result["rsi"]          = val_after("RSI")
-    result["cours_cible"]  = val_after("Objectif de cours") or val_after("Cours cible")
-
-    print(
-        f"[INV] {slug} → cours={result.get('cours')}, "
-        f"var={result.get('variation')}, per={result.get('per')}, "
-        f"rsi={result.get('rsi')}, cap={result.get('capitalisation')}"
-    )
     return result
 
 
@@ -521,52 +347,83 @@ def scrape_investing(slug):
 # Formatage données pour Claude
 # ---------------------------------------------------------------------------
 def _format_scraped_for_claude(ticker, sd):
-    if not sd or sd.get("source") != "investing":
+    if not sd or sd.get("source") != "bvcscrap":
         return (
             "Données marché non disponibles. "
             "Formule des hypothèses réalistes basées sur le contexte du marché marocain."
         )
 
-    lines = [f"Données financières — fr.investing.com — {sd.get('scraped_at', '')} :\n"]
+    lines = [f"Données BVC officielles — casablanca-bourse.com — {sd.get('scraped_at', '')} :\n"]
 
-    # Prix
+    # Cours
     if sd.get("cours"):
-        var_str = f" ({sd['variation']:+.2f}%)" if sd.get("variation") is not None else ""
+        var = sd.get("variation")
+        var_str = f" ({var:+.2f}%)" if var is not None else ""
         lines.append(f"💰 COURS : {sd['cours']:,.2f} MAD{var_str}")
     if sd.get("haut") and sd.get("bas"):
         lines.append(f"- Séance Haut/Bas : {sd['haut']:,.2f} / {sd['bas']:,.2f} MAD")
     if sd.get("ouverture"):
         lines.append(f"- Ouverture : {sd['ouverture']:,.2f} MAD")
     if sd.get("clot_precedent"):
-        lines.append(f"- Clôture précédente : {sd['clot_precedent']:,.2f} MAD")
+        lines.append(f"- Clôture préc. : {sd['clot_precedent']:,.2f} MAD")
     if sd.get("volume"):
         lines.append(f"- Volume : {int(sd['volume']):,} titres")
-    if sd.get("volume_moyen"):
-        lines.append(f"- Volume moyen : {int(sd['volume_moyen']):,} titres")
-    if sd.get("haut_52s") and sd.get("bas_52s"):
-        lines.append(
-            f"- Plage 52 semaines : {sd['bas_52s']:,.2f} → {sd['haut_52s']:,.2f} MAD"
-        )
-
-    lines.append("\nMétriques financières :")
     if sd.get("capitalisation"):
         lines.append(f"- Capitalisation : {sd['capitalisation']:,.0f} MAD")
-    if sd.get("per"):
-        lines.append(f"- PER : {sd['per']:.2f}x")
-    if sd.get("bpa"):
-        lines.append(f"- BPA (EPS) : {sd['bpa']:.2f} MAD")
-    if sd.get("rendement"):
-        lines.append(f"- Rendement dividende : {sd['rendement']:.2f}%")
-    if sd.get("roe"):
-        lines.append(f"- ROE : {sd['roe']:.1f}%")
-    if sd.get("roa"):
-        lines.append(f"- ROA : {sd['roa']:.1f}%")
-    if sd.get("marge_brute"):
-        lines.append(f"- Marge brute : {sd['marge_brute']:.1f}%")
-    if sd.get("rsi"):
-        lines.append(f"- RSI(14) : {sd['rsi']:.1f}")
-    if sd.get("cours_cible"):
-        lines.append(f"- Objectif de cours analyste : {sd['cours_cible']:,.2f} MAD")
+
+    # Chiffres clés (3 ans)
+    ck = sd.get("chiffres_cles", {})
+    annees = ck.get("Annee", [])
+    if annees:
+        lines.append(f"\nChiffres clés — années : {', '.join(str(a) for a in annees)}")
+        for label, key in [
+            ("Chiffre d'affaires", "Chiffre_Affaires"),
+            ("Résultat exploitation", "Resultat_exploitation"),
+            ("Résultat net", "Resultat_net"),
+            ("Capitaux propres", "Capitaux_propres"),
+        ]:
+            vals = ck.get(key, [])
+            if any(v is not None for v in vals):
+                row = " | ".join(
+                    f"{_bvc_num(v):,.1f}" if _bvc_num(v) is not None else "—"
+                    for v in vals
+                )
+                lines.append(f"  {label} : {row}")
+
+    # Ratios (3 ans)
+    rat = sd.get("ratios", {})
+    rat_annees = rat.get("Annee", [])
+    if rat_annees:
+        lines.append(f"\nRatios boursiers — années : {', '.join(str(a) for a in rat_annees)}")
+        for label, key in [
+            ("PER", "PER"), ("BPA (MAD)", "BPA"),
+            ("ROE (%)", "ROE"), ("PBR", "PBR"),
+            ("Rendement div. (%)", "Dividend_yield"),
+            ("Payout (%)", "Payout"),
+        ]:
+            vals = rat.get(key, [])
+            if any(v is not None for v in vals):
+                row = " | ".join(
+                    f"{_bvc_num(v):.2f}" if _bvc_num(v) is not None else "—"
+                    for v in vals
+                )
+                lines.append(f"  {label} : {row}")
+
+    # Actionnaires
+    act = sd.get("actionnaires", {})
+    if act:
+        lines.append("\nActionnariat :")
+        for nom, pct in list(act.items())[:5]:
+            lines.append(f"  - {nom} : {pct}")
+
+    # Dernières séances
+    sp = sd.get("seance_prec", {})
+    dates = sp.get("Date", [])
+    clots = sp.get("Cloture", [])
+    if dates and clots:
+        lines.append("\nDernières séances :")
+        for d, c in zip(dates[-5:], clots[-5:]):
+            lines.append(f"  {d} → {c} MAD")
 
     return "\n".join(lines)
 
@@ -586,17 +443,27 @@ def generate_analysis(ticker, sector, sd):
     company_context = get_company_context(ticker)
     company_section = f"\n{company_context}\n" if company_context else ""
 
-    # Snapshot prix pour section 1
+    # Snapshot prix section 1
     price_snapshot = ""
     if sd and sd.get("cours"):
         cours   = sd["cours"]
-        var_str = f"{sd['variation']:+.2f}%" if sd.get("variation") is not None else "—"
+        var     = sd.get("variation")
+        var_str = f"{var:+.2f}%" if var is not None else "—"
         haut    = f"{sd['haut']:,.2f}" if sd.get("haut") else "—"
         bas     = f"{sd['bas']:,.2f}" if sd.get("bas") else "—"
         vol     = f"{int(sd['volume']):,}" if sd.get("volume") else "—"
-        cible   = f"{sd['cours_cible']:,.2f} MAD" if sd.get("cours_cible") else "—"
+
+        # Calcul cours cible depuis ratios BPA × PER moyen si dispo
+        rat   = sd.get("ratios", {})
+        bpas  = [_bvc_num(v) for v in rat.get("BPA", []) if _bvc_num(v)]
+        pers  = [_bvc_num(v) for v in rat.get("PER", []) if _bvc_num(v)]
+        cible_str = "—"
+        if bpas and pers:
+            cible = bpas[-1] * pers[-1]
+            cible_str = f"{cible:,.2f} MAD (BPA×PER)"
+
         price_snapshot = f"""
-**💰 COURS : {cours:,.2f} MAD ({var_str})**
+**💰 COURS BVC : {cours:,.2f} MAD ({var_str})**
 | Indicateur | Valeur |
 |---|---|
 | Cours actuel | **{cours:,.2f} MAD** |
@@ -604,7 +471,7 @@ def generate_analysis(ticker, sector, sd):
 | Haut du jour | {haut} MAD |
 | Bas du jour | {bas} MAD |
 | Volume | {vol} titres |
-| Objectif analyste | {cible} |
+| Cours cible estimé | {cible_str} |
 
 """
 
@@ -621,14 +488,15 @@ Structure OBLIGATOIRE (7 sections) :
 - Positionnement marché marocain, concurrents clés
 
 ## 📊 2. Analyse fondamentale
-- PER, ROE, ROA, BPA, rendement dividende (utilise données fournies)
+- CA, résultat net, marges (utilise les 3 années fournies, calcule les évolutions YoY)
+- PER, BPA, ROE, PBR, rendement dividende (données fournies)
 - Capitalisation, valorisation vs secteur et historique
 - Forces, faiblesses, risques macro/sectoriels, perspectives
 
 ## 📈 3. Analyse technique
-- Plage 52 semaines comme support/résistance (données fournies)
-- RSI(14) — zone surachat/survente
-- Tendance court/moyen terme, supports et résistances clés (MAD)
+- Tendances court/moyen/long terme basées sur les dernières séances fournies
+- Supports et résistances clés (MAD) déduits du cours actuel et historique
+- Configuration graphique actuelle
 
 ## ⚡ 4. Momentum
 - Tendance de fond, force relative vs MASI
@@ -680,8 +548,9 @@ def index():
 @app.route("/health")
 def health():
     return jsonify({
-        "status":      "ok",
-        "api_key_set": bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "status":        "ok",
+        "bvcscrap":      _BVCSCRAP_OK,
+        "api_key_set":   bool(os.environ.get("ANTHROPIC_API_KEY")),
     })
 
 
@@ -697,17 +566,17 @@ def analyze():
             return jsonify({"error": "Ticker invalide"}), 400
 
         sector = SECTORS.get(ticker, "Secteur divers")
-        slug   = INVESTING_SLUGS.get(ticker)
+        name   = BVC_NAMES.get(ticker)
 
         sd = {"source": "none"}
-        if slug:
+        if name:
             try:
-                sd = scrape_investing(slug)
+                sd = fetch_bvc_data(name)
             except Exception as e:
-                print(f"[WARN] investing.com failed for {ticker} ({slug}): {e}")
+                print(f"[WARN] BVCscrap failed for {ticker} ({name}): {e}")
                 sd = {"source": "none", "error": str(e)}
         else:
-            print(f"[WARN] No investing.com slug for {ticker}")
+            print(f"[WARN] No BVCscrap name for {ticker}")
 
         analysis = generate_analysis(ticker, sector, sd)
 
