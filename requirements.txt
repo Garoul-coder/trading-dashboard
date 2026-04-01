@@ -4,4 +4,4 @@ gunicorn==23.0.0
 requests==2.32.3
 beautifulsoup4==4.12.3
 lxml==5.1.0
-git+https://github.com/AmineAndam04/BVCscrap.git
+BVCscrap==0.2.1
