@@ -1,6 +1,7 @@
 import os
 import re
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify
 import anthropic
@@ -840,33 +841,41 @@ def analyze():
             return jsonify({"error": "Ticker invalide"}), 400
 
         sector = SECTORS.get(ticker, "Secteur divers")
+        slug   = BOURSENEWS_SLUGS.get(ticker)
 
-        # 1. Medias24 — prix BVC fiables via ISIN
-        yp = fetch_medias24_price(ticker)
-
-        # 2. Boursenews — fundamentals, ratios, technicals
+        # ── Fetch medias24 + boursenews EN PARALLÈLE ─────────────────────────
+        yp = None
         sd = None
-        slug = BOURSENEWS_SLUGS.get(ticker)
-        if slug:
+
+        def _fetch_m24():
+            return fetch_medias24_price(ticker)
+
+        def _fetch_bn():
+            if not slug:
+                return None
             try:
-                sd = scrape_boursenews(slug)
+                result = scrape_boursenews(slug)
                 print(f"[DATA] {ticker} → boursenews.ma/{slug} ✓")
+                return result
             except Exception as e:
-                print(f"[WARN] boursenews failed for {ticker} ({slug}): {e}")
-                sd = {"source": "none", "data_available": False}
-        else:
-            print(f"[WARN] No boursenews slug for {ticker}")
+                print(f"[WARN] boursenews failed for {ticker}: {e}")
+                return None
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            fut_m24 = pool.submit(_fetch_m24)
+            fut_bn  = pool.submit(_fetch_bn)
+            yp = fut_m24.result()
+            sd = fut_bn.result()
+
+        if sd is None:
             sd = {"source": "none", "data_available": False}
 
-        # 3. Override prix avec medias24 (source de référence BVC)
+        # ── Merge: medias24 écrase le cours (source de référence BVC) ─────────
         if yp:
-            if sd is None:
-                sd = {}
-            sd["cours"]      = yp["cours"]
-            sd["variation"]  = yp.get("variation")
+            sd["cours"]       = yp["cours"]
+            sd["variation"]   = yp.get("variation")
             sd["prix_source"] = "medias24"
-            sd["date_cours"] = yp.get("date_cours")
-            # enrichir haut/bas/volume si boursenews n'a pas de données valides
+            sd["date_cours"]  = yp.get("date_cours")
             if yp.get("haut"):
                 sd["haut"] = yp["haut"]
             if yp.get("bas"):
