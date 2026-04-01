@@ -1,7 +1,7 @@
 import os
 import re
+import json
 import requests
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify
 import anthropic
@@ -16,85 +16,83 @@ except ImportError:
 app = Flask(__name__)
 
 # ---------------------------------------------------------------------------
-# Mapping ticker BVC → slug boursenews.ma/action/{slug}
-# Source : <select id="enreprisechoise"> sur boursenews.ma
+# Mapping ticker BVC → slug fr.investing.com/equities/{slug}
+# Slugs vérifiés depuis https://fr.investing.com/equities/morocco
 # ---------------------------------------------------------------------------
-BOURSENEWS_SLUGS = {
+INVESTING_SLUGS = {
     # Banques
-    "ATW":    "attijariwafa",
+    "ATW":    "attijariwafa-bk",
     "BCP":    "bcp",
     "CIH":    "cih",
-    "BOA":    "boa",
+    "BOA":    "bmce",
     "CDM":    "cdm",
     "BMCI":   "bmci",
-    "CFG":    "cfg",
+    "CFG":    "cfg-bank",
     # Assurances & Financières
-    "WAA":    "wafa",
+    "WAA":    "wafa-assurance",
     "ACM":    "atlanta",
     "SLF":    "salafin",
-    "AFMA":   "afma",
-    "EQD":    "eqdom",
+    "AFMA":   "afma-sa",
+    "EQD":    "credit-eqdm",
     "MAL":    "maroc-leasing",
-    # Télécoms & Technologies
-    "IAM":    "maroc-telecom",
-    "M2M":    "microdata",   # Microdata = M2M sur boursenews
-    "HPS":    "hps",
+    # Télécoms & Tech
+    "IAM":    "itissalat-al-maghrib",
+    "M2M":    "m2m-group",
+    "HPS":    "highteck-payment",
     "DISWAY": "disway",
-    "DISTY":  "disty",
-    # Mines & Industrie minière
+    "DISTY":  "disty-tech",
+    # Mines
     "SMI":    "smi",
     "MNG":    "managem",
-    "CMT":    "compagnie-miniere",
+    "CMT":    "miniere-touissit",
     # Ciment & BTP
-    "CMR":    "ciments",
-    "LHM":    "lafarge",
-    "JET":    "jet",
-    "TGCC":   "tgcc",
-    "SGTM":   "sgtm",
+    "CMR":    "ciments-du-maroc",
+    "LHM":    "lafarge-ciments",
+    "JET":    "jet-alu-maroc-sa",
+    "TGCC":   "casablanca",
     # Énergie
-    "TMA":    "taqa",
+    "TMA":    "jorf-lasfar",
     "GAZ":    "afriquia-gaz",
-    "TQM":    "totalenergies",
-    "MOX":    "mox",
-    # Agroalimentaire & Boissons
-    "SBM":    "boissons",
+    "TQM":    "total-maroc-sa",
+    "MOX":    "maghreb-oxygene",
+    # Agroalimentaire
+    "SBM":    "brasseries-maroc",
     "OUL":    "oulmes",
-    "FNB":    "fenie",
     "LES":    "lesieur",
     "CSR":    "cosumar",
     "MUT":    "mutandis",
     "UNM":    "unimer",
     "COL":    "colorado",
-    # Distribution & Commerce
-    "LBV":    "labelevie",
+    # Distribution
+    "LBV":    "label-vie",
     # Automobile
-    "ADH":    "autohall",
-    "ALM":    "alliances",
+    "ADH":    "auto-hall",
     # Immobilier
+    "ALM":    "alliances",
     "DHO":    "addoha",
-    "RDS":    "residences",
-    "IMM":    "immorente",
-    "ARA":    "aradei",
+    "RDS":    "res-dar-saada",
+    "IMM":    "immorente-invest",
+    "ARA":    "aradei-capital",
     # Industrie & Chimie
     "SID":    "sonasid",
-    "PRO":    "promopharm",
+    "PRO":    "promopharm-s.a",
     "SNEP":   "snep",
     "SOT":    "sothema",
-    "STK":    "stokvis",
+    "STK":    "stokvis-nord",
     "AFI":    "afric-industries",
     "AKD":    "akdital",
-    "DEL":    "delta",
+    "DEL":    "delta-holding",
     # Transport & Services
-    "CTM":    "ctm",
+    "CTM":    "ctm-ln",
     "RIS":    "risma",
-    "MSA":    "marsa",
+    "MSA":    "marsa-maroc-sa",
     # Autres
-    "ENK":    "ennakl",
-    "CMG":    "cmgp",
-    "VIC":    "vicenne",
+    "S2M":    "s2m",
 }
 
-# Mapping ticker → secteur
+# ---------------------------------------------------------------------------
+# Secteurs BVC
+# ---------------------------------------------------------------------------
 SECTORS = {
     "ATW": "Banques", "BCP": "Banques", "CIH": "Banques",
     "BOA": "Banques", "CDM": "Banques", "BMCI": "Banques", "CFG": "Banques",
@@ -106,206 +104,194 @@ SECTORS = {
     "DISWAY": "Technologies", "DISTY": "Technologies",
     "SMI": "Mines", "MNG": "Mines", "CMT": "Mines",
     "CMR": "Matériaux de construction", "LHM": "Matériaux de construction",
-    "JET": "BTP", "TGCC": "BTP", "SGTM": "BTP",
+    "JET": "BTP", "TGCC": "BTP",
     "TMA": "Énergie", "GAZ": "Énergie", "TQM": "Énergie", "MOX": "Énergie",
-    "SBM": "Agroalimentaire", "OUL": "Agroalimentaire", "FNB": "Agroalimentaire",
+    "SBM": "Agroalimentaire", "OUL": "Agroalimentaire",
     "LES": "Agroalimentaire", "CSR": "Agroalimentaire",
     "MUT": "Agroalimentaire", "UNM": "Agroalimentaire", "COL": "Agroalimentaire",
     "LBV": "Distribution",
-    "ADH": "Automobile", "ALM": "Immobilier",
-    "DHO": "Immobilier", "RDS": "Immobilier",
+    "ADH": "Automobile",
+    "ALM": "Immobilier", "DHO": "Immobilier", "RDS": "Immobilier",
     "IMM": "Immobilier", "ARA": "Immobilier",
     "SID": "Industrie sidérurgique", "PRO": "Pharmacie",
     "SNEP": "Industrie chimique", "SOT": "Pharmacie",
     "STK": "Distribution industrielle", "AFI": "Industrie",
     "AKD": "Santé", "DEL": "Industrie",
     "CTM": "Transport", "RIS": "Tourisme & Loisirs", "MSA": "Transport maritime",
-    "ENK": "Automobile", "CMG": "Services", "VIC": "Services",
+    "S2M": "Technologies",
 }
 
-# Fiches sociétés — source : BVC + rapports publics
+# ---------------------------------------------------------------------------
+# Fiches sociétés
+# ---------------------------------------------------------------------------
 COMPANY_PROFILES = {
     "SMI": {
         "nom": "Société Métallurgique d'Imiter (SMI)",
         "groupe": "Groupe Managem (filiale)",
-        "activite": "Exploitation de la mine d'argent d'Imiter, dans la région de Tinghir (Drâa-Tafilalet). Première mine d'argent d'Afrique. Produit également du zinc et du plomb en sous-produits.",
-        "concurrents": "Managem (MNG), filiales minières du groupe OCP",
-        "particularites": "Très sensible au cours international de l'argent (XAG/USD). Réserves prouvées importantes sur le gisement d'Imiter.",
+        "activite": "Exploitation de la mine d'argent d'Imiter (Tinghir). Première mine d'argent d'Afrique.",
+        "concurrents": "Managem (MNG), filiales minières OCP",
+        "particularites": "Très sensible au cours international de l'argent (XAG/USD).",
     },
     "MNG": {
         "nom": "Managem",
         "groupe": "Groupe ONA / SNI",
-        "activite": "Groupe minier marocain diversifié : or, argent, cobalt, cuivre, zinc, fluorine. Opère au Maroc et en Afrique subsaharienne.",
-        "concurrents": "OCP (phosphates), SMI (filiale), sociétés minières africaines internationales",
-        "particularites": "Leader minier marocain coté à la BVC. Stratégie d'expansion panafricaine.",
+        "activite": "Groupe minier diversifié : or, argent, cobalt, cuivre, zinc. Présent en Afrique.",
+        "concurrents": "OCP, filiales minières africaines",
+        "particularites": "Leader minier marocain coté BVC. Expansion panafricaine.",
     },
     "ATW": {
         "nom": "Attijariwafa Bank",
         "groupe": "Groupe ONA / SNI",
-        "activite": "Premier groupe bancaire et financier du Maroc. Banque universelle présente dans 27 pays africains.",
-        "concurrents": "BCP, BMCE Bank of Africa (BOA), CIH Bank",
-        "particularites": "Plus grande capitalisation boursière de la BVC. Leader du crédit au Maroc.",
+        "activite": "Premier groupe bancaire du Maroc, présent dans 27 pays africains.",
+        "concurrents": "BCP, BOA, CIH Bank",
+        "particularites": "Plus grande capitalisation boursière BVC. Leader crédit Maroc.",
     },
     "BCP": {
         "nom": "Banque Centrale Populaire (BCP)",
-        "groupe": "Groupe Banque Populaire (Crédit Populaire du Maroc)",
-        "activite": "Banque coopérative. Réseau de Banques Populaires Régionales. Banque des MRE, PME et particuliers.",
-        "concurrents": "Attijariwafa Bank (ATW), BMCE Bank of Africa (BOA), CIH Bank",
-        "particularites": "Deuxième groupe bancaire marocain. Fort ancrage régional. Part de marché solide sur les dépôts MRE.",
+        "groupe": "Groupe Banque Populaire",
+        "activite": "Banque coopérative, réseau BPR, banque MRE/PME/particuliers.",
+        "concurrents": "ATW, BOA, CIH Bank",
+        "particularites": "2e groupe bancaire marocain. Fort ancrage régional.",
     },
     "IAM": {
         "nom": "Itissalat Al-Maghrib (Maroc Telecom)",
-        "groupe": "Groupe e& (Émirats Télécommunications)",
-        "activite": "Opérateur télécom historique du Maroc. Mobile, fixe, internet, data centers. Présent dans 8 pays africains.",
-        "concurrents": "Orange Maroc, Inwi (groupe Al Mada)",
-        "particularites": "Opérateur dominant au Maroc. Dividende généreux. Croissance portée par l'Afrique subsaharienne.",
+        "groupe": "Groupe e& (Émirats)",
+        "activite": "Opérateur télécom historique Maroc. Mobile, fixe, internet. 8 pays africains.",
+        "concurrents": "Orange Maroc, Inwi",
+        "particularites": "Dividende généreux. Croissance portée par l'Afrique.",
     },
     "CIH": {
         "nom": "CIH Bank",
         "groupe": "Caisse de Dépôt et de Gestion (CDG)",
-        "activite": "Banque de détail orientée crédit immobilier, consommation, TPE/PME. Digital banking.",
-        "concurrents": "ATW, BCP, BOA, Société Générale Maroc",
-        "particularites": "En forte transformation numérique. Profil de croissance dynamique.",
+        "activite": "Banque de détail, crédit immobilier, TPE/PME, digital banking.",
+        "concurrents": "ATW, BCP, BOA",
+        "particularites": "Forte transformation numérique. Profil de croissance dynamique.",
     },
     "BOA": {
         "nom": "BMCE Bank of Africa",
-        "groupe": "Groupe FinanceCom (famille Othman Benjelloun)",
-        "activite": "Banque universelle marocaine avec présence dans 20+ pays africains.",
-        "concurrents": "Attijariwafa Bank (ATW), Banque Centrale Populaire (BCP)",
-        "particularites": "Troisième groupe bancaire marocain. Pionnier de la bancarisation en Afrique subsaharienne.",
+        "groupe": "Groupe FinanceCom (Benjelloun)",
+        "activite": "Banque universelle marocaine, présente dans 20+ pays africains.",
+        "concurrents": "ATW, BCP",
+        "particularites": "3e groupe bancaire marocain. Pioneer bancaire en Afrique.",
     },
     "HPS": {
         "nom": "Hightech Payment Systems (HPS)",
-        "groupe": "Indépendant (fondateurs)",
-        "activite": "Éditeur de logiciels de paiement électronique. Solution PowerCARD. Clients dans 90+ pays.",
-        "concurrents": "Fiserv, FIS, Temenos (internationaux)",
-        "particularites": "Champion marocain de la fintech à l'international. Revenus récurrents. Forte croissance export.",
+        "groupe": "Indépendant",
+        "activite": "Éditeur logiciels paiement électronique (PowerCARD). 90+ pays.",
+        "concurrents": "Fiserv, FIS, Temenos",
+        "particularites": "Champion marocain fintech international. Revenus récurrents.",
     },
     "TMA": {
         "nom": "Taqa Morocco",
-        "groupe": "Abu Dhabi National Energy Company (TAQA) — 72,6%",
-        "activite": "Production d'électricité depuis la centrale thermique de Jorf Lasfar (2 760 MW). Vente exclusive à l'ONEE.",
-        "concurrents": "ONEE, autres producteurs indépendants (IPP)",
-        "particularites": "Contrat PPA long terme avec l'ONEE. Revenus stables. Fort rendement dividende.",
+        "groupe": "TAQA Abu Dhabi (72,6%)",
+        "activite": "Production électricité centrale Jorf Lasfar (2 760 MW). Vente à l'ONEE.",
+        "concurrents": "ONEE, autres IPP",
+        "particularites": "Contrat PPA long terme. Revenus stables. Fort rendement dividende.",
     },
     "CMR": {
-        "nom": "Ciments du Maroc (CimMaroc)",
-        "groupe": "Groupe Heidelberg Materials — majoritaire",
-        "activite": "Production de ciment, béton, granulats et chaux. Deuxième cimentier du Maroc.",
-        "concurrents": "LafargeHolcim Maroc (LHM), Asment de Témara, Cimat",
-        "particularites": "Bénéficiaire potentiel du Mondial 2030 et reconstruction post-séisme.",
+        "nom": "Ciments du Maroc",
+        "groupe": "Heidelberg Materials",
+        "activite": "Production ciment, béton, granulats. 2e cimentier Maroc.",
+        "concurrents": "LafargeHolcim Maroc, Asment, Cimat",
+        "particularites": "Bénéficiaire Mondial 2030 et reconstruction post-séisme.",
     },
     "LHM": {
         "nom": "LafargeHolcim Maroc",
-        "groupe": "Holcim Group (Suisse) — majoritaire",
-        "activite": "Premier cimentier du Maroc. Production de ciment, béton, granulats, mortiers.",
-        "concurrents": "Ciments du Maroc (CMR), Asment de Témara, Cimat",
-        "particularites": "Stratégie décarbonation. Fort levier sur les grands chantiers infrastructure.",
+        "groupe": "Holcim Group (Suisse)",
+        "activite": "1er cimentier Maroc. Ciment, béton, granulats, mortiers.",
+        "concurrents": "Ciments du Maroc, Asment, Cimat",
+        "particularites": "Stratégie décarbonation. Levier grands chantiers infrastructure.",
     },
     "GAZ": {
         "nom": "Afriquia Gaz",
-        "groupe": "Groupe Akwa (famille Akhannouch)",
-        "activite": "Distribution et commercialisation de GPL (butane, propane). Leader du marché gaz au Maroc.",
-        "concurrents": "Maghreb Oxygène, Total Énergies Maroc",
-        "particularites": "Monopole partiel sur le GPL. Prix butane subventionné par l'État. Fort dividende.",
+        "groupe": "Groupe Akwa (Akhannouch)",
+        "activite": "Distribution GPL (butane, propane). Leader marché gaz Maroc.",
+        "concurrents": "Maghreb Oxygène, TotalEnergies Maroc",
+        "particularites": "Prix butane subventionné. Fort dividende.",
     },
     "WAA": {
         "nom": "Wafa Assurance",
         "groupe": "Attijariwafa Bank (filiale)",
-        "activite": "Compagnie d'assurance multibranche : vie, non-vie, assurance-crédit, santé.",
-        "concurrents": "RMA (FinanceCom), Saham Assurance (Sanlam), AXA Assurance Maroc",
-        "particularites": "Leader de l'assurance au Maroc. Forte synergie avec Attijariwafa Bank.",
+        "activite": "Assurance multibranche : vie, non-vie, santé, crédit.",
+        "concurrents": "RMA, Saham Assurance (Sanlam), AXA Maroc",
+        "particularites": "Leader assurance Maroc. Synergie ATW.",
     },
     "SBM": {
-        "nom": "Société des Boissons du Maroc (SBM)",
-        "groupe": "Castel Group (France) — actionnaire majoritaire",
-        "activite": "Production et distribution de bières (Flag, Casablanca, Heineken sous licence), eaux minérales (Sidi Ali).",
-        "concurrents": "CBGN, Coca-Cola Maroc, Pepsi",
-        "particularites": "Secteur régulé. Fort pricing power. Dividende généreux.",
+        "nom": "Société des Boissons du Maroc",
+        "groupe": "Castel Group (France)",
+        "activite": "Bières (Flag, Casablanca, Heineken licence), eaux (Sidi Ali).",
+        "concurrents": "CBGN, Coca-Cola Maroc",
+        "particularites": "Fort pricing power. Dividende généreux.",
     },
     "DHO": {
         "nom": "Douja Promotion Groupe Addoha",
         "groupe": "Famille Anas Sefrioui",
-        "activite": "Premier promoteur immobilier marocain. Logement social, économique et haut standing.",
-        "concurrents": "Alliances Développement Immobilier, Résidences Dar Saada",
-        "particularites": "Très sensible aux politiques de logement social. Restructuration de la dette en cours.",
-    },
-    "CTM": {
-        "nom": "CTM (Compagnie de Transport au Maroc)",
-        "groupe": "Groupe FinanceCom (actionnaire)",
-        "activite": "Transport routier de voyageurs au Maroc et vers l'Europe.",
-        "concurrents": "Supratours (ONCF), transporteurs privés, compagnies aériennes low-cost",
-        "particularites": "Quasi-monopole sur les liaisons longue distance de qualité.",
+        "activite": "1er promoteur immobilier Maroc. Logement social, économique, haut standing.",
+        "concurrents": "Alliances, Résidences Dar Saada",
+        "particularites": "Sensible politiques logement social. Restructuration dette en cours.",
     },
     "LES": {
         "nom": "Lesieur Cristal",
-        "groupe": "Groupe OCP / Sofiprotéol",
-        "activite": "Production et commercialisation d'huiles alimentaires (Lesieur, Huilor), savons, margarines.",
-        "concurrents": "Aicha, producteurs régionaux, importations",
-        "particularites": "Leader des huiles alimentaires au Maroc. Sensible aux cours des oléagineux.",
+        "groupe": "OCP / Sofiprotéol",
+        "activite": "Huiles alimentaires (Lesieur, Huilor), savons, margarines.",
+        "concurrents": "Aicha, importations",
+        "particularites": "Leader huiles alimentaires Maroc. Sensible cours oléagineux.",
     },
     "CSR": {
         "nom": "Cosumar",
-        "groupe": "Groupe Al Mada (ex-SNI)",
-        "activite": "Principale sucrerie du Maroc. Extraction et raffinage du sucre. Marques : Nassim, Enmer, Farida.",
-        "concurrents": "Importations, producteurs régionaux de sucre",
-        "particularites": "Quasi-monopole sur le sucre raffiné au Maroc. Prix encadrés par l'État.",
+        "groupe": "Groupe Al Mada",
+        "activite": "Sucrerie du Maroc. Extraction et raffinage sucre.",
+        "concurrents": "Importations",
+        "particularites": "Quasi-monopole sucre raffiné. Prix encadrés État.",
     },
     "LBV": {
         "nom": "Label'Vie",
-        "groupe": "Famille Zniber / Carrefour (partenariat franchise)",
-        "activite": "Distribution alimentaire et non-alimentaire. Enseignes : Carrefour, Carrefour Market, Atacadão.",
-        "concurrents": "Marjane (ONA), Aswak Assalam, BIM",
-        "particularites": "Forte croissance du réseau. Concept Atacadão (Cash & Carry) en expansion.",
+        "groupe": "Famille Zniber / Carrefour",
+        "activite": "Distribution alimentaire. Carrefour, Carrefour Market, Atacadão.",
+        "concurrents": "Marjane, Aswak Assalam, BIM",
+        "particularites": "Forte croissance réseau. Concept Atacadão en expansion.",
     },
     "SID": {
         "nom": "Sonasid",
-        "groupe": "Groupe ArcelorMittal (majoritaire)",
-        "activite": "Production d'acier long (ronds à béton, fil machine). Principal sidérurgiste marocain.",
-        "concurrents": "Importations d'acier (Turquie, Chine, Europe), Maghreb Steel",
-        "particularites": "Sensible aux cours mondiaux de l'acier et de la ferraille. Levier sur le BTP marocain.",
-    },
-    "PRO": {
-        "nom": "Promopharm",
-        "groupe": "Groupe Sanofi (filiale)",
-        "activite": "Production et distribution de médicaments génériques et princeps. Usine à Casablanca.",
-        "concurrents": "Sothema, Cooper Pharma, Laprophan",
-        "particularites": "Filiale de Sanofi. Bénéficiaire de la politique de généricisation au Maroc.",
-    },
-    "RIS": {
-        "nom": "Risma",
-        "groupe": "Groupe Accor (actionnaire de référence)",
-        "activite": "Gestion hôtelière au Maroc. Portefeuille d'hôtels Accor (Ibis, Novotel, Mercure, Sofitel).",
-        "concurrents": "Hôtels indépendants, chaînes internationales (Marriott, Hilton)",
-        "particularites": "Bénéficiaire direct du tourisme marocain. Levier sur le Mondial 2030.",
-    },
-    "OUL": {
-        "nom": "Les Eaux Minérales d'Oulmès",
-        "groupe": "Groupe Holmarcom",
-        "activite": "Production et distribution d'eaux minérales (Sidi Ali, Oulmès) et de boissons gazeuses (Coca-Cola sous licence).",
-        "concurrents": "SBM (Sidi Ali), Ain Saïss, importations",
-        "particularites": "Leader des eaux minérales et boissons gazeuses. Franchise Coca-Cola au Maroc.",
-    },
-    "MUT": {
-        "nom": "Mutandis",
-        "groupe": "Management (fondateurs)",
-        "activite": "Holding agroalimentaire. Marques : Carrefour (produits MDD), St Michel (biscuits), pêche, conserves.",
-        "concurrents": "Divers selon segment",
-        "particularites": "Conglomérat agroalimentaire en croissance. Modèle de consolidation de niches.",
-    },
-    "MOX": {
-        "nom": "Maghreb Oxygène",
-        "groupe": "Groupe Air Liquide (partenariat)",
-        "activite": "Production et distribution de gaz industriels (oxygène, azote, acétylène, CO2) et médicaux.",
-        "concurrents": "Linde Maroc, Air Products",
-        "particularites": "Position de niche dans les gaz industriels. Clients : sidérurgie, santé, industrie.",
+        "groupe": "ArcelorMittal",
+        "activite": "Acier long (ronds à béton, fil machine). Principal sidérurgiste marocain.",
+        "concurrents": "Importations acier, Maghreb Steel",
+        "particularites": "Sensible cours mondiaux acier/ferraille.",
     },
     "ADH": {
         "nom": "Auto Hall",
         "groupe": "Groupe Holmarcom",
-        "activite": "Distribution automobile : concessionnaire Ford, Mitsubishi, Volvo, Iveco au Maroc.",
+        "activite": "Distribution automobile : Ford, Mitsubishi, Volvo, Iveco.",
         "concurrents": "Auto Nejma, Sopriam, SMEIA",
-        "particularites": "Premier distributeur automobile au Maroc. Sensible au marché auto et au crédit.",
+        "particularites": "1er distributeur automobile Maroc.",
+    },
+    "MSA": {
+        "nom": "Marsa Maroc",
+        "groupe": "État marocain (actionnaire principal)",
+        "activite": "Exploitation et développement des ports marocains.",
+        "concurrents": "Opérateurs portuaires internationaux",
+        "particularites": "Levier direct sur croissance commerce extérieur marocain.",
+    },
+    "RIS": {
+        "nom": "Risma",
+        "groupe": "Groupe Accor",
+        "activite": "Gestion hôtelière Maroc. Ibis, Novotel, Mercure, Sofitel.",
+        "concurrents": "Hôtels indépendants, Marriott, Hilton",
+        "particularites": "Bénéficiaire tourisme marocain et Mondial 2030.",
+    },
+    "OUL": {
+        "nom": "Les Eaux Minérales d'Oulmès",
+        "groupe": "Groupe Holmarcom",
+        "activite": "Eaux minérales (Sidi Ali, Oulmès), boissons gazeuses (Coca-Cola licence).",
+        "concurrents": "SBM, Ain Saïss",
+        "particularites": "Leader eaux minérales et boissons gazeuses. Franchise Coca-Cola.",
+    },
+    "AKD": {
+        "nom": "Akdital",
+        "groupe": "Fondateurs (Dr Rochdi Talib)",
+        "activite": "Réseau de cliniques privées au Maroc. Leader hospitalier privé coté BVC.",
+        "concurrents": "Clinimaroc, cliniques indépendantes",
+        "particularites": "Forte croissance. Seul acteur santé privé coté BVC.",
     },
 }
 
@@ -321,187 +307,119 @@ def get_company_context(ticker):
         f"- Concurrents    : {p['concurrents']}",
         f"- Particularités : {p['particularites']}",
     ]
-    return "Fiche société (source : BVC / rapports publics) :\n" + "\n".join(lines)
+    return "Fiche société :\n" + "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
-# Scraper boursenews.ma
+# Scraper fr.investing.com
 # ---------------------------------------------------------------------------
-_BN_HEADERS = {
+_INV_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
-    "Referer": "https://boursenews.ma/",
-}
-
-
-# ---------------------------------------------------------------------------
-# Medias24 API — prix BVC fiables via ISIN
-# Endpoint : https://medias24.com/content/api?method=getPriceHistory&ISIN={isin}&format=json
-# Réponse  : [{"date":"2026-03-31","open":6200,"high":6122,"low":6100,"close":6122,"volume":1200}, ...]
-# ---------------------------------------------------------------------------
-BVC_ISIN = {
-    # ── Banques ──────────────────────────────────────────────────────────────
-    "ATW":    "MA0000011926",  # Attijariwafa Bank
-    "BCP":    "MA0000011884",  # Banque Centrale Populaire
-    "CIH":    "MA0000011454",  # CIH Bank
-    "BOA":    "MA0000012437",  # Bank of Africa
-    "CDM":    "MA0000010381",  # Crédit du Maroc
-    "BMCI":   "MA0000010811",  # BMCI
-    "CFG":    "MA0000012627",  # CFG Bank
-    # ── Assurances & Financières ─────────────────────────────────────────────
-    "WAA":    "MA0000010928",  # Wafa Assurance
-    "ACM":    "MA0000011900",  # Atlanta
-    "SLF":    "MA0000011744",  # Salafin
-    "AFMA":   "MA0000012296",  # AFMA
-    "EQD":    "MA0000010357",  # Eqdom
-    "MAL":    "MA0000011736",  # Maroc Leasing
-    # ── Télécoms & Tech ───────────────────────────────────────────────────────
-    "IAM":    "MA0000011488",  # Maroc Telecom
-    "M2M":    "MA0000011686",  # M2M Group
-    "HPS":    "MA0000011611",  # HPS
-    "DISWAY": "MA0000011637",  # Disway
-    "DISTY":  "MA0000012536",  # Disty Technologies
-    # ── Mines ────────────────────────────────────────────────────────────────
-    "SMI":    "MA0000012445",  # SMI (Société Métallurgique d'Imiter) ✓ confirmé
-    "MNG":    "MA0000011058",  # Managem
-    "CMT":    "MA0000011793",  # Minière Touissit
-    # ── Ciment & BTP ─────────────────────────────────────────────────────────
-    "CMR":    "MA0000012247",  # Ciments du Maroc
-    "LHM":    "MA0000012320",  # LafargeHolcim Maroc
-    "JET":    "MA0000012080",  # Jet Contractors
-    "TGCC":   "MA0000012528",  # TGCC
-    # ── Énergie ───────────────────────────────────────────────────────────────
-    "TMA":    "MA0000012205",  # TAQA Morocco
-    "GAZ":    "MA0000010951",  # Afriquia Gaz
-    "TQM":    "MA0000012262",  # TotalEnergies Marketing Maroc
-    "MOX":    "MA0000010985",  # Maghreb Oxygène
-    # ── Agro-alimentaire ──────────────────────────────────────────────────────
-    "SBM":    "MA0000010365",  # Brasseries du Maroc
-    "OUL":    "MA0000010415",  # Oulmes
-    "LES":    "MA0000011843",  # Lesieur Cristal
-    "CSR":    "MA0000012247",  # Cosumar
-    "MUT":    "MA0000012619",  # Mutandis
-    "LBV":    "MA0000011801",  # Label Vie
-    # ── Immobilier ────────────────────────────────────────────────────────────
-    "ADH":    "MA0000011512",  # Auto Hall
-    "ALM":    "MA0000010936",  # Aluminium du Maroc
-    "DHO":    "MA0000011850",  # Addoha
-    "RDS":    "MA0000012239",  # Résidences Dar Saada
-    # ── Industrie & Divers ───────────────────────────────────────────────────
-    "SID":    "MA0000010019",  # Sonasid
-    "PRO":    "MA0000011660",  # Promopharm
-    "SNEP":   "MA0000011728",  # SNEP
-    "CTM":    "MA0000011462",  # CTM
-    "RIS":    "MA0000011462",  # Risma
-    "MSA":    "MA0000012312",  # Marsa Maroc
-}
-
-_M24_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "application/json, text/plain, */*",
-    "Referer": "https://medias24.com/",
-    "Origin": "https://medias24.com",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Referer": "https://fr.investing.com/",
+    "Accept-Encoding": "gzip, deflate, br",
     "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "same-origin",
+    "Cache-Control": "max-age=0",
 }
 
 
-def fetch_medias24_price(ticker):
+def _inv_num(s):
     """
-    Fetch last close price from medias24 API using ISIN + date range params.
-    Returns dict with 'cours', 'open', 'haut', 'bas', 'volume', 'date_cours' or None.
+    Parse investing.com French-format numbers.
+    '6.734,00' → 6734.0  |  '10,07B' → 10070000000  |  '+10,00%' → 10.0
     """
-    isin = BVC_ISIN.get(ticker)
-    if not isin:
-        print(f"[M24] No ISIN for {ticker}")
-        return None
-
-    today = datetime.utcnow()
-    date_to   = today.strftime("%Y-%m-%d")
-    date_from = (today.replace(day=1)).strftime("%Y-%m-%d")  # 1er du mois courant
-
-    params = {
-        "method": "getPriceHistory",
-        "ISIN":   isin,
-        "format": "json",
-        "from":   date_from,
-        "to":     date_to,
-    }
-    try:
-        r = requests.get("https://medias24.com/content/api",
-                         params=params, headers=_M24_HEADERS, timeout=(4, 8))
-        print(f"[M24] {ticker} HTTP {r.status_code} (ISIN={isin})")
-        r.raise_for_status()
-        data = r.json()
-        if not data or not isinstance(data, list):
-            print(f"[M24] Empty/invalid JSON for {ticker}: {str(data)[:100]}")
-            return None
-        # Sort by date desc, take latest
-        latest = sorted(data, key=lambda x: x.get("date", ""), reverse=True)[0]
-        close  = latest.get("close")
-        open_  = latest.get("open")
-        if not close or close <= 0:
-            print(f"[M24] Invalid price for {ticker}: {latest}")
-            return None
-        variation = ((close - open_) / open_ * 100) if open_ else None
-        print(f"[M24] {ticker} ({isin}) = {close} MAD @ {latest.get('date')}")
-        return {
-            "cours":       close,
-            "open":        open_,
-            "haut":        latest.get("high"),
-            "bas":         latest.get("low"),
-            "volume":      latest.get("volume"),
-            "date_cours":  latest.get("date"),
-            "variation":   variation,
-            "prix_source": "medias24",
-        }
-    except Exception as e:
-        print(f"[M24] {ticker} ({isin}) failed: {e}")
-    return None
-
-
-def _fr_num(s):
-    """Convert French-formatted number string to float. '2 000,00' → 2000.0"""
     if s is None:
         return None
     s = str(s).strip().replace("\xa0", "").replace("\u202f", "").replace(" ", "")
-    s = s.replace(",", ".")
-    s = re.sub(r"[^\d.\-]", "", s)
+    mult = 1
+    su = s.upper()
+    if su.endswith('B'):
+        mult = 1_000_000_000
+        s = s[:-1]
+    elif su.endswith('M') and not su.endswith('MAD'):
+        mult = 1_000_000
+        s = s[:-1]
+    # French: dots = thousands separator, comma = decimal → remove dots, comma→dot
+    s = s.replace('.', '').replace(',', '.')
+    s = re.sub(r'[^\d.\-]', '', s)
     try:
-        return float(s) if s not in ("", ".") else None
+        return float(s) * mult if s not in ('', '.') else None
     except ValueError:
         return None
 
 
-def scrape_boursenews(slug):
+def scrape_investing(slug):
     """
-    Fetch boursenews.ma/action/{slug} and extract all financial data.
-    Returns a dict ready to be serialised as JSON.
-    Timeout: 20s. Uses html.parser (no lxml dependency).
+    Scrape fr.investing.com/equities/{slug}.
+    Extracts: cours, variation, haut, bas, volume, ouverture, clot_precedent,
+              haut_52s, bas_52s, per, bpa, capitalisation, rendement, roe, roa,
+              marge_brute, rsi, cours_cible.
+    Returns a dict. Raises RuntimeError on failure.
     """
     if not _BS4_OK:
         raise RuntimeError("beautifulsoup4 non installé")
 
-    url = f"https://boursenews.ma/action/{slug}"
+    url = f"https://fr.investing.com/equities/{slug}"
     try:
-        resp = requests.get(url, headers=_BN_HEADERS, timeout=(5, 10))
+        resp = requests.get(url, headers=_INV_HEADERS, timeout=(5, 12))
         resp.raise_for_status()
     except requests.exceptions.Timeout:
         raise RuntimeError(f"Timeout scraping {url}")
     except requests.exceptions.HTTPError as e:
-        raise RuntimeError(f"HTTP {e.response.status_code} for {url}")
+        raise RuntimeError(f"HTTP {e.response.status_code} scraping {url}")
 
     soup = BeautifulSoup(resp.text, "html.parser")
-    result = {"source": "boursenews", "url": url, "scraped_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")}
+    result = {
+        "source":     "investing",
+        "url":        url,
+        "scraped_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+    }
 
-    # ── 1. Prix et données de séance ──────────────────────────────────────
-    # Page text lines — iterate to find labelled values
+    # ── 1. Prix : essai via data-test (nouveau UI investing.com) ─────────────
+    price_el = soup.find(attrs={"data-test": "instrument-price-last"})
+    if price_el:
+        result["cours"] = _inv_num(price_el.get_text(strip=True))
+
+    var_el = soup.find(attrs={"data-test": "instrument-price-change-percent"})
+    if var_el:
+        result["variation"] = _inv_num(
+            var_el.get_text(strip=True).strip("()%")
+        )
+
+    # ── 2. Essai via __NEXT_DATA__ JSON ──────────────────────────────────────
+    if not result.get("cours"):
+        nd = soup.find("script", {"id": "__NEXT_DATA__"})
+        if nd and nd.string:
+            try:
+                data = json.loads(nd.string)
+                props = data.get("props", {}).get("pageProps", {})
+                for path in [
+                    ["instrumentData", "last"],
+                    ["priceData", "last"],
+                    ["data", "last"],
+                ]:
+                    val = props
+                    for key in path:
+                        if isinstance(val, dict):
+                            val = val.get(key)
+                    if val is not None:
+                        result["cours"] = _inv_num(str(val))
+                        break
+            except Exception:
+                pass
+
+    # ── 3. Parsing texte (fallback universel) ─────────────────────────────────
     lines = [ln.strip() for ln in soup.get_text(separator="\n").split("\n") if ln.strip()]
 
-    def val_after(label, max_offset=4, exclude=None):
+    def val_after(label, max_offset=3, exclude=None):
         label_l = label.lower()
         excl_l  = [e.lower() for e in (exclude or [])]
         for i, ln in enumerate(lines):
@@ -509,227 +427,140 @@ def scrape_boursenews(slug):
             if label_l in ln_l and not any(e in ln_l for e in excl_l):
                 for j in range(1, max_offset + 1):
                     if i + j < len(lines):
-                        v = _fr_num(lines[i + j])
-                        if v is not None:
+                        v = _inv_num(lines[i + j])
+                        if v is not None and v > 0:
                             return v
         return None
 
-    result["cours"]      = val_after("Cours", exclude=["cible", "variation", "haut", "bas", "ouverture", "offre", "demande"])
-    result["variation"]  = val_after("Var (%)")  or val_after("Var.")
-    result["volume"]     = val_after("Volumes")  or val_after("Volume")
-    result["haut"]       = val_after("+ Haut")   or val_after("Haut")
-    result["bas"]        = val_after("+ Bas")    or val_after("Bas")
-    result["ouverture"]  = val_after("Ouverture")
-    result["meil_dem"]   = val_after("Meilleure demande") or val_after("Demande")
-    result["meil_off"]   = val_after("Meilleure offre")   or val_after("Offre")
-
-    # ── 2. Tableaux financiers annuels ────────────────────────────────────
-    annees = []
-    financials = {}
-    for table in soup.find_all("table"):
-        rows = table.find_all("tr")
-        if not rows:
-            continue
-        header_cells = rows[0].find_all(["th", "td"])
-        header_texts = [c.get_text(strip=True) for c in header_cells]
-        year_cols = [i for i, t in enumerate(header_texts) if re.match(r"^20\d{2}", t)]
-        if not year_cols:
-            continue
-        if not annees:
-            annees = [header_texts[i] for i in year_cols]
-        for row in rows[1:]:
-            cells = row.find_all(["th", "td"])
-            if not cells:
-                continue
-            label = cells[0].get_text(strip=True)
-            if not label or label in ("", "-"):
-                continue
-            values = []
-            for i in year_cols:
-                v = _fr_num(cells[i].get_text(strip=True)) if i < len(cells) else None
-                values.append(v)
-            if any(v is not None for v in values):
-                financials[label] = dict(zip(annees, values))
-
-    result["annees"]     = annees
-    result["financials"] = financials
-
-    # ── 3. Données Chart.js (labels + data arrays dans les <script>) ──────
-    chart_series = {}
-    scripts = [s.string for s in soup.find_all("script") if s.string]
-    for script in scripts:
-        # Pattern: label: 'X', data: [1, 2, 3]  or  label: "X", data: [...]
-        matches = re.findall(
-            r'label\s*:\s*["\']([^"\']+)["\']\s*,\s*data\s*:\s*\[([^\]]+)\]',
-            script
-        )
-        for lbl, data_str in matches:
-            nums = re.findall(r"-?\d+(?:\.\d+)?", data_str)
-            if nums:
-                chart_series[lbl] = [float(n) for n in nums]
-    if chart_series:
-        result["chart_series"] = chart_series
-
-    # ── 4. Scores radar (Fondamentaux, Momentum, Visibilité…) ─────────────
-    radar_keys = {"Fondamentaux", "Momentum", "Visibilite", "Visibilité", "Consensus", "Valorisation"}
-    radar = {}
-    for script in scripts:
-        for key in radar_keys:
-            m = re.search(rf'["\']?{key}["\']?\s*:\s*(\d+(?:\.\d+)?)', script)
-            if m:
-                radar[key.replace("é", "e")] = float(m.group(1))
-    # Fallback: search in data arrays labelled with these keywords
-    if not radar:
-        for script in scripts:
-            m = re.search(
-                r'labels\s*:\s*\[([^\]]+)\].*?data\s*:\s*\[([^\]]+)\]',
-                script, re.DOTALL
-            )
-            if m:
-                lbls = re.findall(r'["\']([^"\']+)["\']', m.group(1))
-                vals = re.findall(r'-?\d+(?:\.\d+)?', m.group(2))
-                for l, v in zip(lbls, vals):
-                    if any(k.lower() in l.lower() for k in radar_keys):
-                        radar[l] = float(v)
-    if radar:
-        result["scores"] = radar
-
-    # ── 5. Signaux techniques (Acheter / Neutre / Vendre) ─────────────────
-    signals = {}
-    signal_map = {"Acheter": "acheter", "Neutre": "neutre", "Vendre": "vendre"}
-    for i, ln in enumerate(lines):
-        for fr_key, en_key in signal_map.items():
-            if ln.strip() == fr_key:
-                for j in range(1, 4):
+    def range_val(label):
+        """Parse 'X,XX - Y,YY' → (low, high)"""
+        label_l = label.lower()
+        for i, ln in enumerate(lines):
+            if label_l in ln.lower():
+                for j in range(1, 5):
                     if i + j < len(lines):
-                        v = _fr_num(lines[i + j])
-                        if v is not None:
-                            signals[en_key] = int(v)
-                            break
-    if signals:
-        result["signaux_techniques"] = signals
+                        m = re.search(r'([\d.,]+)\s*[-–]\s*([\d.,]+)', lines[i + j])
+                        if m:
+                            return _inv_num(m.group(1)), _inv_num(m.group(2))
+        return None, None
 
-    # ── 6. Cours cible analyste ───────────────────────────────────────────
-    for i, ln in enumerate(lines):
-        if "cours cible" in ln.lower():
-            for j in range(1, 5):
-                if i + j < len(lines):
-                    v = _fr_num(lines[i + j])
-                    if v and v > 10:
-                        result["cours_cible"] = v
-                        break
-            break
+    # Prix depuis le texte si pas trouvé via data-test
+    if not result.get("cours"):
+        for ln in lines[:40]:
+            v = _inv_num(ln)
+            if v and v > 50:   # toutes les valeurs BVC sont > 50 MAD
+                result["cours"] = v
+                break
 
-    # ── 7. Actionnaires ───────────────────────────────────────────────────
-    shareholders = []
-    for table in soup.find_all("table"):
-        for row in table.find_all("tr"):
-            cells = row.find_all("td")
-            if len(cells) == 2:
-                name = cells[0].get_text(strip=True)
-                pct_text = cells[1].get_text(strip=True)
-                if "%" in pct_text and name and name.upper() != "TOTAL":
-                    pct = _fr_num(pct_text.replace("%", "").strip())
-                    if pct is not None and 0 < pct <= 100:
-                        shareholders.append({"nom": name, "pct": pct})
-    if shareholders:
-        result["actionnaires"] = shareholders
+    # Variation depuis le texte
+    if not result.get("variation"):
+        for ln in lines[:40]:
+            m = re.search(r'\(([+-]?\d+[.,]\d+)%\)', ln)
+            if m:
+                result["variation"] = _inv_num(m.group(1))
+                break
 
-    # ── 8. Ratios (PER, PBR, DY) depuis les tableaux ─────────────────────
-    for label, values in financials.items():
-        l = label.upper()
-        if "PER" in l:
-            result["ratios_per"] = values
-        elif "PBR" in l:
-            result["ratios_pbr"] = values
-        elif "DY" in l or "DIVIDENDE" in l:
-            result["ratios_dy"] = values
+    # Haut / Bas journalier
+    bas, haut = range_val("Ecart journalier")
+    if not (bas and haut):
+        bas, haut = range_val("Fourchette journalière")
+    if haut:
+        result["haut"] = haut
+    if bas:
+        result["bas"] = bas
 
+    # 52 semaines
+    bas52, haut52 = range_val("Ecart 52")
+    if not (bas52 and haut52):
+        bas52, haut52 = range_val("52 sem")
+    if haut52:
+        result["haut_52s"] = haut52
+    if bas52:
+        result["bas_52s"] = bas52
+
+    # Volume
+    result["volume"]       = val_after("Volume", exclude=["moyen", "échangé moyen"])
+    result["volume_moyen"] = val_after("Volume moyen")
+
+    # Données séance
+    result["ouverture"]      = val_after("Ouverture")
+    result["clot_precedent"] = val_after("Clôture précédente") or val_after("Cloture précédente")
+
+    # Métriques financières
+    result["per"]          = val_after("P/E Ratio") or val_after("PER")
+    result["bpa"]          = val_after("BPA")
+    result["rendement"]    = val_after("Rendement")
+    result["capitalisation"] = val_after("Capitalisation")
+    result["roe"]          = val_after("ROE")
+    result["roa"]          = val_after("ROA")
+    result["marge_brute"]  = val_after("Marge brute")
+    result["rsi"]          = val_after("RSI")
+    result["cours_cible"]  = val_after("Objectif de cours") or val_after("Cours cible")
+
+    print(
+        f"[INV] {slug} → cours={result.get('cours')}, "
+        f"var={result.get('variation')}, per={result.get('per')}, "
+        f"rsi={result.get('rsi')}, cap={result.get('capitalisation')}"
+    )
     return result
 
 
+# ---------------------------------------------------------------------------
+# Formatage données pour Claude
+# ---------------------------------------------------------------------------
 def _format_scraped_for_claude(ticker, sd):
-    """
-    Format the scraped boursenews data into a rich text context for Claude.
-    Returns a string to inject in the prompt.
-    """
-    if not sd or sd.get("source") != "boursenews":
-        return "Données marché non disponibles. Formule des hypothèses réalistes basées sur le contexte du marché marocain."
+    if not sd or sd.get("source") != "investing":
+        return (
+            "Données marché non disponibles. "
+            "Formule des hypothèses réalistes basées sur le contexte du marché marocain."
+        )
 
-    lines = [f"Données financières issues de boursenews.ma — scraped le {sd.get('scraped_at', 'N/A')} :\n"]
+    lines = [f"Données financières — fr.investing.com — {sd.get('scraped_at', '')} :\n"]
 
-    # Cours actuel
+    # Prix
     if sd.get("cours"):
-        variation = sd.get("variation")
-        var_str = f" ({variation:+.2f}%)" if variation is not None else ""
-        lines.append(f"💰 **COURS ACTUEL : {sd['cours']:,.2f} MAD{var_str}**")
-    if sd.get("haut"):
-        lines.append(f"- Séance : Haut {sd['haut']:,.2f} / Bas {sd.get('bas', '—'):,.2f} MAD")
+        var_str = f" ({sd['variation']:+.2f}%)" if sd.get("variation") is not None else ""
+        lines.append(f"💰 COURS : {sd['cours']:,.2f} MAD{var_str}")
+    if sd.get("haut") and sd.get("bas"):
+        lines.append(f"- Séance Haut/Bas : {sd['haut']:,.2f} / {sd['bas']:,.2f} MAD")
     if sd.get("ouverture"):
         lines.append(f"- Ouverture : {sd['ouverture']:,.2f} MAD")
+    if sd.get("clot_precedent"):
+        lines.append(f"- Clôture précédente : {sd['clot_precedent']:,.2f} MAD")
     if sd.get("volume"):
-        lines.append(f"- Volume échangé : {int(sd['volume']):,} titres")
-    if sd.get("cours_cible"):
-        lines.append(f"- Cours cible analyste : {sd['cours_cible']:,.2f} MAD")
-
-    # Données financières annuelles
-    fin = sd.get("financials", {})
-    annees = sd.get("annees", [])
-    if fin and annees:
-        lines.append(f"\nDonnées financières annuelles (en MMAD) — années : {', '.join(annees)}")
-        key_labels = [
-            "Chiffre d'affaires", "CA", "Chiffre d affaires",
-            "EBITDA",
-            "Résultat d'exploitation", "Résultat exploitation",
-            "Résultat net",
-            "Marge d'exploitation", "Marge exploitation",
-            "Marge nette",
-            "BNA", "DPA",
-        ]
-        for label, values in fin.items():
-            # Only show key financial metrics
-            if any(k.lower() in label.lower() for k in key_labels):
-                row_vals = " | ".join(
-                    f"{v:,.1f}" if isinstance(v, float) and v is not None else "—"
-                    for v in [values.get(y) for y in annees]
-                )
-                lines.append(f"  {label}: {row_vals}")
-
-    # Scores radar
-    scores = sd.get("scores", {})
-    if scores:
-        score_str = " | ".join(f"{k}: {v}/10" for k, v in scores.items())
-        lines.append(f"\nScores qualitatifs : {score_str}")
-
-    # Signaux techniques
-    sig = sd.get("signaux_techniques", {})
-    if sig:
+        lines.append(f"- Volume : {int(sd['volume']):,} titres")
+    if sd.get("volume_moyen"):
+        lines.append(f"- Volume moyen : {int(sd['volume_moyen']):,} titres")
+    if sd.get("haut_52s") and sd.get("bas_52s"):
         lines.append(
-            f"Signaux techniques : Acheter={sig.get('acheter', '?')} | "
-            f"Neutre={sig.get('neutre', '?')} | Vendre={sig.get('vendre', '?')}"
+            f"- Plage 52 semaines : {sd['bas_52s']:,.2f} → {sd['haut_52s']:,.2f} MAD"
         )
 
-    # Actionnaires
-    act = sd.get("actionnaires", [])
-    if act:
-        lines.append("\nActionnariat :")
-        for a in act[:5]:
-            lines.append(f"  - {a['nom']}: {a['pct']}%")
-
-    # Ratios
-    if sd.get("ratios_per"):
-        per_vals = " | ".join(
-            f"{yr}: {sd['ratios_per'].get(yr, '—')}"
-            for yr in annees[-4:] if yr in sd.get("ratios_per", {})
-        )
-        if per_vals:
-            lines.append(f"PER historique : {per_vals}")
+    lines.append("\nMétriques financières :")
+    if sd.get("capitalisation"):
+        lines.append(f"- Capitalisation : {sd['capitalisation']:,.0f} MAD")
+    if sd.get("per"):
+        lines.append(f"- PER : {sd['per']:.2f}x")
+    if sd.get("bpa"):
+        lines.append(f"- BPA (EPS) : {sd['bpa']:.2f} MAD")
+    if sd.get("rendement"):
+        lines.append(f"- Rendement dividende : {sd['rendement']:.2f}%")
+    if sd.get("roe"):
+        lines.append(f"- ROE : {sd['roe']:.1f}%")
+    if sd.get("roa"):
+        lines.append(f"- ROA : {sd['roa']:.1f}%")
+    if sd.get("marge_brute"):
+        lines.append(f"- Marge brute : {sd['marge_brute']:.1f}%")
+    if sd.get("rsi"):
+        lines.append(f"- RSI(14) : {sd['rsi']:.1f}")
+    if sd.get("cours_cible"):
+        lines.append(f"- Objectif de cours analyste : {sd['cours_cible']:,.2f} MAD")
 
     return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
-# Claude API
+# Claude API — analyse 7 axes
 # ---------------------------------------------------------------------------
 def get_client():
     api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -739,32 +570,29 @@ def get_client():
 
 
 def generate_analysis(ticker, sector, sd):
-    """Build prompt from scraped data and call Claude Haiku."""
-    data_context = _format_scraped_for_claude(ticker, sd)
-
+    data_context    = _format_scraped_for_claude(ticker, sd)
     company_context = get_company_context(ticker)
     company_section = f"\n{company_context}\n" if company_context else ""
 
-    # Price snapshot for section 1
+    # Snapshot prix pour section 1
     price_snapshot = ""
-    if sd and sd.get("source") == "boursenews" and sd.get("cours"):
-        cours = sd["cours"]
-        variation = sd.get("variation")
-        var_str = f"{variation:+.2f}%" if variation is not None else "—"
-        haut = sd.get("haut", "—")
-        bas = sd.get("bas", "—")
-        vol = f"{int(sd['volume']):,}" if sd.get("volume") else "—"
-        cible = f"{sd['cours_cible']:,.2f} MAD" if sd.get("cours_cible") else "—"
+    if sd and sd.get("cours"):
+        cours   = sd["cours"]
+        var_str = f"{sd['variation']:+.2f}%" if sd.get("variation") is not None else "—"
+        haut    = f"{sd['haut']:,.2f}" if sd.get("haut") else "—"
+        bas     = f"{sd['bas']:,.2f}" if sd.get("bas") else "—"
+        vol     = f"{int(sd['volume']):,}" if sd.get("volume") else "—"
+        cible   = f"{sd['cours_cible']:,.2f} MAD" if sd.get("cours_cible") else "—"
         price_snapshot = f"""
-**💰 COURS ACTUEL : {cours:,.2f} MAD ({var_str})**
+**💰 COURS : {cours:,.2f} MAD ({var_str})**
 | Indicateur | Valeur |
 |---|---|
 | Cours actuel | **{cours:,.2f} MAD** |
 | Variation séance | {var_str} |
 | Haut du jour | {haut} MAD |
 | Bas du jour | {bas} MAD |
-| Volume échangé | {vol} titres |
-| Cours cible analyste | {cible} |
+| Volume | {vol} titres |
+| Objectif analyste | {cible} |
 
 """
 
@@ -781,25 +609,25 @@ Structure OBLIGATOIRE (7 sections) :
 - Positionnement marché marocain, concurrents clés
 
 ## 📊 2. Analyse fondamentale
-- CA, résultat net, marges EBITDA/nette (utilise données fournies, avec évolutions YoY)
-- PER, ROE, rendement dividende (DPA/cours), valorisation vs historique
+- PER, ROE, ROA, BPA, rendement dividende (utilise données fournies)
+- Capitalisation, valorisation vs secteur et historique
 - Forces, faiblesses, risques macro/sectoriels, perspectives
 
 ## 📈 3. Analyse technique
-- Tendances court/moyen/long terme
-- Signaux Acheter/Neutre/Vendre fournis + scores radar (si disponibles)
-- Supports et résistances clés (MAD), configuration actuelle
+- Plage 52 semaines comme support/résistance (données fournies)
+- RSI(14) — zone surachat/survente
+- Tendance court/moyen terme, supports et résistances clés (MAD)
 
 ## ⚡ 4. Momentum
-- Tendance de fond, force vs MASI
+- Tendance de fond, force relative vs MASI
 - Signal : 🟢 HAUSSIER | 🟡 NEUTRE | 🔴 BAISSIER
 
 ## 🏭 5. Comparaison sectorielle
 | Critère | {ticker} | Pair 1 | Pair 2 |
 |---|---|---|---|
-| Croissance CA | | | |
-| Marge nette | | | |
 | PER | | | |
+| ROE | | | |
+| Rendement div. | | | |
 
 ## 🧾 6. Opinion
 - **ACHAT FORT** / **ACHAT** / **CONSERVER** / **ALLÉGER** / **VENTE**
@@ -821,12 +649,11 @@ Structure OBLIGATOIRE (7 sections) :
 # ---------------------------------------------------------------------------
 # Flask routes
 # ---------------------------------------------------------------------------
-
-# Garantit que toutes les erreurs Flask retournent du JSON (jamais du HTML)
 @app.errorhandler(Exception)
 def handle_any_exception(e):
     print(f"[ERROR] Unhandled: {e}")
     return jsonify({"error": str(e)}), 500
+
 
 @app.errorhandler(404)
 def handle_404(e):
@@ -840,7 +667,10 @@ def index():
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok", "api_key_set": bool(os.environ.get("ANTHROPIC_API_KEY"))})
+    return jsonify({
+        "status":      "ok",
+        "api_key_set": bool(os.environ.get("ANTHROPIC_API_KEY")),
+    })
 
 
 @app.route("/analyze", methods=["POST"])
@@ -855,49 +685,17 @@ def analyze():
             return jsonify({"error": "Ticker invalide"}), 400
 
         sector = SECTORS.get(ticker, "Secteur divers")
-        slug   = BOURSENEWS_SLUGS.get(ticker)
+        slug   = INVESTING_SLUGS.get(ticker)
 
-        # ── Fetch medias24 + boursenews EN PARALLÈLE ─────────────────────────
-        yp = None
-        sd = None
-
-        def _fetch_m24():
-            return fetch_medias24_price(ticker)
-
-        def _fetch_bn():
-            if not slug:
-                return None
+        sd = {"source": "none"}
+        if slug:
             try:
-                result = scrape_boursenews(slug)
-                print(f"[DATA] {ticker} → boursenews.ma/{slug} ✓")
-                return result
+                sd = scrape_investing(slug)
             except Exception as e:
-                print(f"[WARN] boursenews failed for {ticker}: {e}")
-                return None
-
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            fut_m24 = pool.submit(_fetch_m24)
-            fut_bn  = pool.submit(_fetch_bn)
-            yp = fut_m24.result()
-            sd = fut_bn.result()
-
-        if sd is None:
-            sd = {"source": "none", "data_available": False}
-
-        # ── Merge: medias24 écrase le cours (source de référence BVC) ─────────
-        if yp:
-            sd["cours"]       = yp["cours"]
-            sd["variation"]   = yp.get("variation")
-            sd["prix_source"] = "medias24"
-            sd["date_cours"]  = yp.get("date_cours")
-            if yp.get("haut"):
-                sd["haut"] = yp["haut"]
-            if yp.get("bas"):
-                sd["bas"] = yp["bas"]
-            if yp.get("volume") and not sd.get("volume"):
-                sd["volume"] = yp["volume"]
-            if sd.get("source") == "none":
-                sd["source"] = "medias24"
+                print(f"[WARN] investing.com failed for {ticker} ({slug}): {e}")
+                sd = {"source": "none", "error": str(e)}
+        else:
+            print(f"[WARN] No investing.com slug for {ticker}")
 
         analysis = generate_analysis(ticker, sector, sd)
 
