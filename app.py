@@ -1,5 +1,6 @@
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify
 import anthropic
@@ -283,8 +284,8 @@ def _bvc_num(s):
 # ---------------------------------------------------------------------------
 def fetch_bvc_data(name):
     """
-    Appelle getCours() + getKeyIndicators() depuis BVCscrap.
-    Retourne un dict unifié prêt pour Claude.
+    Appelle getCours() + getKeyIndicators() en PARALLÈLE avec timeout strict.
+    Budget : 12s max pour les deux appels BVCscrap combinés.
     """
     if not _BVCSCRAP_OK:
         raise RuntimeError("BVCscrap non installé")
@@ -292,53 +293,44 @@ def fetch_bvc_data(name):
     result = {"source": "bvcscrap", "name": name,
                "scraped_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")}
 
-    # ── 1. Données de séance ─────────────────────────────────────────────────
-    try:
-        raw = getCours(name)
-        seance = raw.get("Données_Seance", {})
+    # ── Exécution parallèle avec timeout ─────────────────────────────────────
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        fut_cours = pool.submit(getCours, name)
+        fut_ind   = pool.submit(getKeyIndicators, name)
 
-        result["cours"]          = _bvc_num(seance.get("Cours"))
-        result["variation"]      = _bvc_num(seance.get("Variation"))
-        result["ouverture"]      = _bvc_num(seance.get("Ouverture"))
-        result["haut"]           = _bvc_num(seance.get("Plus haut"))
-        result["bas"]            = _bvc_num(seance.get("Plus bas"))
-        result["clot_precedent"] = _bvc_num(seance.get("Cours de cloture veille"))
-        result["volume"]         = _bvc_num(seance.get("Volume en titres"))
-        result["capitalisation"] = _bvc_num(seance.get("Capitalisation"))
+        # getCours — timeout 12s
+        try:
+            raw    = fut_cours.result(timeout=12)
+            seance = raw.get("Données_Seance", {})
+            result["cours"]          = _bvc_num(seance.get("Cours"))
+            result["variation"]      = _bvc_num(seance.get("Variation"))
+            result["ouverture"]      = _bvc_num(seance.get("Ouverture"))
+            result["haut"]           = _bvc_num(seance.get("Plus haut"))
+            result["bas"]            = _bvc_num(seance.get("Plus bas"))
+            result["clot_precedent"] = _bvc_num(seance.get("Cours de cloture veille"))
+            result["volume"]         = _bvc_num(seance.get("Volume en titres"))
+            result["capitalisation"] = _bvc_num(seance.get("Capitalisation"))
+            sp = raw.get("Seance_prec", {})
+            if sp:
+                result["seance_prec"] = sp
+            print(f"[BVC] getCours({name}) → cours={result.get('cours')}, vol={result.get('volume')}")
+        except FutureTimeout:
+            print(f"[BVC] getCours({name}) TIMEOUT")
+        except Exception as e:
+            print(f"[BVC] getCours({name}) ERROR: {e}")
 
-        # Dernières 5 séances
-        seance_prec = raw.get("Seance_prec", {})
-        if seance_prec:
-            result["seance_prec"] = seance_prec
-
-        print(
-            f"[BVC] getCours({name}) → cours={result.get('cours')}, "
-            f"var={result.get('variation')}, vol={result.get('volume')}"
-        )
-    except Exception as e:
-        print(f"[BVC] getCours({name}) FAILED: {e}")
-
-    # ── 2. Indicateurs clés (fondamentaux + ratios) ──────────────────────────
-    try:
-        ind = getKeyIndicators(name)
-
-        # Chiffres clés (3 années)
-        ck = ind.get("Chiffres_cles", {})
-        result["chiffres_cles"] = ck   # Annee, CA, Resultat_net, etc.
-
-        # Ratios (3 années)
-        rat = ind.get("Ratio", {})
-        result["ratios"] = rat          # Annee, PER, BPA, ROE, PBR, DY, Payout
-
-        # Actionnaires
-        result["actionnaires"] = ind.get("Actionnaires", {})
-
-        # Info société (ISIN, secteur, siège, etc.)
-        result["info_societe"] = ind.get("Info_Societe", {})
-
-        print(f"[BVC] getKeyIndicators({name}) → ratios={list(rat.keys())}")
-    except Exception as e:
-        print(f"[BVC] getKeyIndicators({name}) FAILED: {e}")
+        # getKeyIndicators — timeout 12s
+        try:
+            ind = fut_ind.result(timeout=12)
+            result["chiffres_cles"] = ind.get("Chiffres_cles", {})
+            result["ratios"]        = ind.get("Ratio", {})
+            result["actionnaires"]  = ind.get("Actionnaires", {})
+            result["info_societe"]  = ind.get("Info_Societe", {})
+            print(f"[BVC] getKeyIndicators({name}) → OK")
+        except FutureTimeout:
+            print(f"[BVC] getKeyIndicators({name}) TIMEOUT")
+        except Exception as e:
+            print(f"[BVC] getKeyIndicators({name}) ERROR: {e}")
 
     return result
 
@@ -522,6 +514,7 @@ Structure OBLIGATOIRE (7 sections) :
         model="claude-haiku-4-5",
         max_tokens=2000,
         messages=[{"role": "user", "content": prompt}],
+        timeout=15,   # 15s max pour Claude — budget total Render < 30s
     )
     return response.content[0].text
 
