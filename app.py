@@ -338,32 +338,113 @@ _BN_HEADERS = {
 
 
 # ---------------------------------------------------------------------------
-# Stooq — real-time price via CSV (no auth, no Cloudflare, BVC = {ticker}.cs)
+# Medias24 API — prix BVC fiables via ISIN
+# Endpoint : https://medias24.com/content/api?method=getPriceHistory&ISIN={isin}&format=json
+# Réponse  : [{"date":"2026-03-31","open":6200,"high":6122,"low":6100,"close":6122,"volume":1200}, ...]
 # ---------------------------------------------------------------------------
-def fetch_stooq_price(ticker):
+BVC_ISIN = {
+    # ── Banques ──────────────────────────────────────────────────────────────
+    "ATW":    "MA0000011926",  # Attijariwafa Bank
+    "BCP":    "MA0000011884",  # Banque Centrale Populaire
+    "CIH":    "MA0000011454",  # CIH Bank
+    "BOA":    "MA0000012437",  # Bank of Africa
+    "CDM":    "MA0000010381",  # Crédit du Maroc
+    "BMCI":   "MA0000010811",  # BMCI
+    "CFG":    "MA0000012627",  # CFG Bank
+    # ── Assurances & Financières ─────────────────────────────────────────────
+    "WAA":    "MA0000010928",  # Wafa Assurance
+    "ACM":    "MA0000011900",  # Atlanta
+    "SLF":    "MA0000011744",  # Salafin
+    "AFMA":   "MA0000012296",  # AFMA
+    "EQD":    "MA0000010357",  # Eqdom
+    "MAL":    "MA0000011736",  # Maroc Leasing
+    # ── Télécoms & Tech ───────────────────────────────────────────────────────
+    "IAM":    "MA0000011488",  # Maroc Telecom
+    "M2M":    "MA0000011686",  # M2M Group
+    "HPS":    "MA0000011611",  # HPS
+    "DISWAY": "MA0000011637",  # Disway
+    "DISTY":  "MA0000012536",  # Disty Technologies
+    # ── Mines ────────────────────────────────────────────────────────────────
+    "SMI":    "MA0000012445",  # SMI (Société Métallurgique d'Imiter) ✓ confirmé
+    "MNG":    "MA0000011058",  # Managem
+    "CMT":    "MA0000011793",  # Minière Touissit
+    # ── Ciment & BTP ─────────────────────────────────────────────────────────
+    "CMR":    "MA0000012247",  # Ciments du Maroc
+    "LHM":    "MA0000012320",  # LafargeHolcim Maroc
+    "JET":    "MA0000012080",  # Jet Contractors
+    "TGCC":   "MA0000012528",  # TGCC
+    # ── Énergie ───────────────────────────────────────────────────────────────
+    "TMA":    "MA0000012205",  # TAQA Morocco
+    "GAZ":    "MA0000010951",  # Afriquia Gaz
+    "TQM":    "MA0000012262",  # TotalEnergies Marketing Maroc
+    "MOX":    "MA0000010985",  # Maghreb Oxygène
+    # ── Agro-alimentaire ──────────────────────────────────────────────────────
+    "SBM":    "MA0000010365",  # Brasseries du Maroc
+    "OUL":    "MA0000010415",  # Oulmes
+    "LES":    "MA0000011843",  # Lesieur Cristal
+    "CSR":    "MA0000012247",  # Cosumar
+    "MUT":    "MA0000012619",  # Mutandis
+    "LBV":    "MA0000011801",  # Label Vie
+    # ── Immobilier ────────────────────────────────────────────────────────────
+    "ADH":    "MA0000011512",  # Auto Hall
+    "ALM":    "MA0000010936",  # Aluminium du Maroc
+    "DHO":    "MA0000011850",  # Addoha
+    "RDS":    "MA0000012239",  # Résidences Dar Saada
+    # ── Industrie & Divers ───────────────────────────────────────────────────
+    "SID":    "MA0000010019",  # Sonasid
+    "PRO":    "MA0000011660",  # Promopharm
+    "SNEP":   "MA0000011728",  # SNEP
+    "CTM":    "MA0000011462",  # CTM
+    "RIS":    "MA0000011462",  # Risma
+    "MSA":    "MA0000012312",  # Marsa Maroc
+}
+
+_M24_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Accept": "application/json",
+    "Referer": "https://medias24.com/bourse/",
+}
+
+
+def fetch_medias24_price(ticker):
     """
-    Fetch latest close from stooq.com CSV endpoint.
-    URL: https://stooq.com/q/l/?s={ticker}.cs&f=sd2t2ohlcv&h&e=csv
-    CSV columns: Symbol,Date,Time,Open,High,Low,Close,Volume
-    Returns dict with 'cours', 'variation' or None on failure.
+    Fetch last close price from medias24 API using ISIN.
+    Takes the most recent entry from getPriceHistory and returns its close.
+    Returns dict with 'cours', 'open', 'haut', 'bas', 'volume', 'date_cours' or None.
     """
-    symbol = ticker.lower() + ".cs"
-    url = f"https://stooq.com/q/l/?s={symbol}&f=sd2t2ohlcv&h&e=csv"
+    isin = BVC_ISIN.get(ticker)
+    if not isin:
+        print(f"[M24] No ISIN for {ticker}")
+        return None
+    url = f"https://medias24.com/content/api?method=getPriceHistory&ISIN={isin}&format=json"
     try:
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=(3, 6))
+        r = requests.get(url, headers=_M24_HEADERS, timeout=(4, 8))
         r.raise_for_status()
-        lines = [ln.strip() for ln in r.text.strip().splitlines() if ln.strip()]
-        if len(lines) >= 2:
-            cols = lines[1].split(",")
-            # cols: Symbol, Date, Time, Open, High, Low, Close, Volume
-            close = float(cols[6]) if len(cols) > 6 and cols[6] not in ("", "N/D") else None
-            open_ = float(cols[3]) if len(cols) > 3 and cols[3] not in ("", "N/D") else None
-            if close and close > 0:
-                variation = ((close - open_) / open_ * 100) if open_ else None
-                print(f"[STOOQ] {ticker} ({symbol}) = {close} MAD")
-                return {"cours": close, "variation": variation, "prix_source": "Stooq"}
+        data = r.json()
+        if not data or not isinstance(data, list):
+            print(f"[M24] Empty response for {ticker} ({isin})")
+            return None
+        # Sort by date desc, take latest
+        latest = sorted(data, key=lambda x: x.get("date", ""), reverse=True)[0]
+        close  = latest.get("close")
+        open_  = latest.get("open")
+        if not close or close <= 0:
+            print(f"[M24] Invalid price for {ticker}: {latest}")
+            return None
+        variation = ((close - open_) / open_ * 100) if open_ else None
+        print(f"[M24] {ticker} ({isin}) = {close} MAD @ {latest.get('date')}")
+        return {
+            "cours":       close,
+            "open":        open_,
+            "haut":        latest.get("high"),
+            "bas":         latest.get("low"),
+            "volume":      latest.get("volume"),
+            "date_cours":  latest.get("date"),
+            "variation":   variation,
+            "prix_source": "medias24",
+        }
     except Exception as e:
-        print(f"[STOOQ] {ticker} failed: {e}")
+        print(f"[M24] {ticker} ({isin}) failed: {e}")
     return None
 
 
@@ -760,8 +841,8 @@ def analyze():
 
         sector = SECTORS.get(ticker, "Secteur divers")
 
-        # 1. Stooq — real-time price (CSV, no auth, BVC = {ticker}.cs)
-        yp = fetch_stooq_price(ticker)
+        # 1. Medias24 — prix BVC fiables via ISIN
+        yp = fetch_medias24_price(ticker)
 
         # 2. Boursenews — fundamentals, ratios, technicals
         sd = None
@@ -777,16 +858,23 @@ def analyze():
             print(f"[WARN] No boursenews slug for {ticker}")
             sd = {"source": "none", "data_available": False}
 
-        # 3. Override cours/variation with Yahoo price (authoritative)
+        # 3. Override prix avec medias24 (source de référence BVC)
         if yp:
             if sd is None:
                 sd = {}
-            sd["cours"]       = yp["cours"]
-            sd["variation"]   = yp.get("variation")
-            sd["cours_veille"] = yp.get("cours_veille")
-            sd["prix_source"] = "Yahoo Finance"
+            sd["cours"]      = yp["cours"]
+            sd["variation"]  = yp.get("variation")
+            sd["prix_source"] = "medias24"
+            sd["date_cours"] = yp.get("date_cours")
+            # enrichir haut/bas/volume si boursenews n'a pas de données valides
+            if yp.get("haut"):
+                sd["haut"] = yp["haut"]
+            if yp.get("bas"):
+                sd["bas"] = yp["bas"]
+            if yp.get("volume") and not sd.get("volume"):
+                sd["volume"] = yp["volume"]
             if sd.get("source") == "none":
-                sd["source"] = "yahoo"
+                sd["source"] = "medias24"
 
         analysis = generate_analysis(ticker, sector, sd)
 
