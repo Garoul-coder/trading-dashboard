@@ -5,13 +5,8 @@ from datetime import datetime
 from flask import Flask, render_template, request, jsonify
 import anthropic
 
-# BVCscrap — import seulement depuis .tech pour éviter pandas (load.py)
-try:
-    from BVCscrap.tech import getCours, getKeyIndicators
-    _BVCSCRAP_OK = True
-except ImportError:
-    _BVCSCRAP_OK = False
-    print("[WARN] BVCscrap non installé")
+from bvcscrap.tech import getCours, getKeyIndicators
+_BVCSCRAP_OK = True
 
 app = Flask(__name__)
 
