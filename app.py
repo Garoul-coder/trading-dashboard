@@ -422,7 +422,7 @@ def get_client():
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         raise ValueError("Clé API Anthropic non configurée.")
-    return anthropic.Anthropic(api_key=api_key)
+    return anthropic.Anthropic(api_key=api_key, max_retries=0)
 
 
 def generate_analysis(ticker, sector, sd):
