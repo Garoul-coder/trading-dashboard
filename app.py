@@ -401,29 +401,43 @@ BVC_ISIN = {
 }
 
 _M24_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "Accept": "application/json",
-    "Referer": "https://medias24.com/bourse/",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "Referer": "https://medias24.com/",
+    "Origin": "https://medias24.com",
+    "Connection": "keep-alive",
 }
 
 
 def fetch_medias24_price(ticker):
     """
-    Fetch last close price from medias24 API using ISIN.
-    Takes the most recent entry from getPriceHistory and returns its close.
+    Fetch last close price from medias24 API using ISIN + date range params.
     Returns dict with 'cours', 'open', 'haut', 'bas', 'volume', 'date_cours' or None.
     """
     isin = BVC_ISIN.get(ticker)
     if not isin:
         print(f"[M24] No ISIN for {ticker}")
         return None
-    url = f"https://medias24.com/content/api?method=getPriceHistory&ISIN={isin}&format=json"
+
+    today = datetime.utcnow()
+    date_to   = today.strftime("%Y-%m-%d")
+    date_from = (today.replace(day=1)).strftime("%Y-%m-%d")  # 1er du mois courant
+
+    params = {
+        "method": "getPriceHistory",
+        "ISIN":   isin,
+        "format": "json",
+        "from":   date_from,
+        "to":     date_to,
+    }
     try:
-        r = requests.get(url, headers=_M24_HEADERS, timeout=(4, 8))
+        r = requests.get("https://medias24.com/content/api",
+                         params=params, headers=_M24_HEADERS, timeout=(4, 8))
+        print(f"[M24] {ticker} HTTP {r.status_code} (ISIN={isin})")
         r.raise_for_status()
         data = r.json()
         if not data or not isinstance(data, list):
-            print(f"[M24] Empty response for {ticker} ({isin})")
+            print(f"[M24] Empty/invalid JSON for {ticker}: {str(data)[:100]}")
             return None
         # Sort by date desc, take latest
         latest = sorted(data, key=lambda x: x.get("date", ""), reverse=True)[0]
