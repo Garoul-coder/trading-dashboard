@@ -293,9 +293,9 @@ def fetch_bvc_data(name):
         fut_cours = pool.submit(getCours, name)
         fut_ind   = pool.submit(getKeyIndicators, name)
 
-        # getCours — timeout 12s
+        # getCours — timeout 11s
         try:
-            raw    = fut_cours.result(timeout=12)
+            raw    = fut_cours.result(timeout=11)
             seance = raw.get("Données_Seance", {})
             result["cours"]          = _bvc_num(seance.get("Cours"))
             result["variation"]      = _bvc_num(seance.get("Variation"))
@@ -314,9 +314,9 @@ def fetch_bvc_data(name):
         except Exception as e:
             print(f"[BVC] getCours({name}) ERROR: {e}")
 
-        # getKeyIndicators — timeout 12s
+        # getKeyIndicators — timeout 11s
         try:
-            ind = fut_ind.result(timeout=12)
+            ind = fut_ind.result(timeout=11)
             result["chiffres_cles"] = ind.get("Chiffres_cles", {})
             result["ratios"]        = ind.get("Ratio", {})
             result["actionnaires"]  = ind.get("Actionnaires", {})
@@ -509,7 +509,7 @@ Structure OBLIGATOIRE (7 sections) :
         model="claude-haiku-4-5",
         max_tokens=2000,
         messages=[{"role": "user", "content": prompt}],
-        timeout=15,   # 15s max pour Claude — budget total Render < 30s
+        timeout=12,   # 12s max pour Claude — budget total Render < 30s
     )
     return response.content[0].text
 
