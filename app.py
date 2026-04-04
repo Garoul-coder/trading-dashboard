@@ -1,6 +1,13 @@
 import os
 import json
 import time
+
+# Charge .env automatiquement en local (ignoré si python-dotenv absent)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 import threading
 import queue
 import requests as http
@@ -553,7 +560,7 @@ def generate_analysis(ticker, sector, sd):
 
 """
 
-    prompt = f"""Analyste financier BVC expert. Analyse complète en français, style broker, bullet points concis.
+    prompt = f"""Analyste financier BVC expert. Analyse complète en français, style broker, bullet points et numérotation concis.
 
 RÈGLE ABSOLUE : N'invente JAMAIS un cours ou un prix. Si le cours n'est pas fourni dans les données ci-dessous, indique explicitement "cours non disponible" et ne cite aucun chiffre de prix.
 
@@ -561,25 +568,33 @@ Ticker : **{ticker}** | Secteur : {sector}
 {company_section}
 {data_context}
 
-Structure OBLIGATOIRE (7 sections) :
+Structure OBLIGATOIRE (7 sections, utilise puces "- " et numérotation "1. 2. 3." pour toutes les listes) :
 
 ## 🔎 1. Présentation
 {price_snapshot}- Nom complet, groupe, activité principale
-- Positionnement marché marocain, concurrents clés
+- Positionnement marché marocain
+- Concurrents clés
 
 ## 📊 2. Analyse fondamentale
-- PER, rendement dividende, beta (données fournies)
-- Capitalisation, valorisation vs secteur et historique
-- Forces, faiblesses, risques macro/sectoriels, perspectives
+- PER, rendement dividende, beta (données fournies uniquement)
+- Capitalisation et valorisation vs secteur
+- **Forces :**
+  1. [force 1]
+  2. [force 2]
+- **Risques :**
+  1. [risque 1]
+  2. [risque 2]
 
 ## 📈 3. Analyse technique
-- Tendances court/moyen terme basées sur les signaux fournis
-- Supports et résistances clés (MAD) déduits du cours actuel et du 52S
+- Tendance court terme (basée sur signaux fournis)
+- Tendance moyen terme
+- Supports / Résistances clés (MAD) déduits du cours et 52S
 - Configuration graphique actuelle
 
 ## ⚡ 4. Momentum
-- Tendance de fond, force relative vs MASI
-- Signal : 🟢 HAUSSIER | 🟡 NEUTRE | 🔴 BAISSIER
+- Tendance de fond vs MASI
+- Force relative sectorielle
+- Signal global : 🟢 HAUSSIER | 🟡 NEUTRE | 🔴 BAISSIER
 
 ## 🏭 5. Comparaison sectorielle
 | Critère | {ticker} | Pair 1 | Pair 2 |
@@ -587,11 +602,23 @@ Structure OBLIGATOIRE (7 sections) :
 | PER | | | |
 | Rendement div. | | | |
 | Beta | | | |
+| Tendance | | | |
 
 ## 🧾 6. Opinion
-- **ACHAT FORT** / **ACHAT** / **CONSERVER** / **ALLÉGER** / **VENTE**
-- Prix cible 12 mois (MAD) · Risque : Faible/Moyen/Élevé
-- 3 arguments clés
+
+⭐ **RECOMMANDATION : ACHAT FORT / ACHAT / CONSERVER / ALLÉGER / VENTE** _(choisis une seule)_
+
+| Paramètre | Détail |
+|---|---|
+| **Prix cible 12M** | XXX MAD (+XX% potentiel) |
+| **Prix entrée actuel** | XXX MAD |
+| **Potentiel haussier** | +XX% \| Risque baissier : -XX% (XXX MAD) |
+| **Profil risque** | Faible / Moyen / Élevé |
+
+**Arguments principaux :**
+1. [argument 1]
+2. [argument 2]
+3. [argument 3]
 
 ## 🧠 7. Résumé exécutif
 4-5 lignes max, style flash note broker, orienté décision."""

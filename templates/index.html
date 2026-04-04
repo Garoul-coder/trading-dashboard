@@ -45,6 +45,21 @@
     }
     .analysis-card h2 { font-size: 1.1rem; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: .5rem; }
     .analysis-content { line-height: 1.8; white-space: pre-wrap; }
+    .md-bullet { display:flex; gap:.55rem; margin-bottom:.3rem; align-items:flex-start; }
+    .md-bullet-dot { color:var(--bvc-green); flex-shrink:0; font-size:.85rem; margin-top:.18rem; }
+    .md-num-item { display:flex; gap:.55rem; margin-bottom:.3rem; align-items:flex-start; }
+    .md-num-badge { background:rgba(0,132,61,.25); color:#4fc3f7; border-radius:50%; width:1.3rem; height:1.3rem; font-size:.72rem; font-weight:700; display:flex; align-items:center; justify-content:center; flex-shrink:0; margin-top:.1rem; }
+    .md-nested { padding-left:1.6rem; margin-top:.2rem; }
+    .opinion-card { background:linear-gradient(135deg,#0d2137 0%,#0a1628 100%); border:1px solid rgba(0,132,61,.4); border-radius:12px; padding:1.25rem 1.5rem; margin-bottom:1rem; }
+    .opinion-card .rec-badge { font-size:1.1rem; font-weight:800; letter-spacing:.04em; padding:.35rem .9rem; border-radius:8px; display:inline-block; margin-bottom:1rem; }
+    .rec-achat-fort { background:linear-gradient(90deg,#00843D,#00b050); color:#fff; }
+    .rec-achat      { background:rgba(0,132,61,.8); color:#fff; }
+    .rec-conserver  { background:rgba(0,100,180,.8); color:#fff; }
+    .rec-alleger    { background:rgba(180,120,0,.8); color:#fff; }
+    .rec-vente      { background:rgba(180,0,0,.8); color:#fff; }
+    .opinion-table td:first-child { font-weight:600; color:#b0c4d8; width:42%; }
+    .opinion-table td:last-child  { color:#e8f4e8; font-weight:500; }
+    .section-h2-num { display:inline-block; background:rgba(0,132,61,.2); color:#4fc3f7; border-radius:4px; padding:.1rem .45rem; font-size:.8rem; font-weight:700; margin-right:.4rem; }
     .search-input {
       background: rgba(255,255,255,0.07) !important;
       border: 2px solid rgba(0,132,61,0.4) !important;
@@ -307,7 +322,7 @@
 </div>
 
 <footer class="text-center text-secondary py-3" style="font-size:.8rem; border-top:1px solid rgba(255,255,255,.05);">
-  Propulsé par <strong>Claude Haiku 4.5</strong> (Anthropic) · Données officielles BVC via <strong>casablanca-bourse.com</strong> · BVCscrap
+  Propulsé par <strong>Claude Haiku 4.5</strong> (Anthropic) · Données BVC temps réel via <strong>Drahmi API</strong>
 </footer>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
@@ -369,11 +384,12 @@ function renderResults(data) {
 
   // Source badge
   const srcEl = document.getElementById('rSource');
-  if (data.data_source === 'bvcscrap') {
-    srcEl.textContent = '✓ Données BVC — casablanca-bourse.com';
+  if (data.data_source === 'drahmi' || data.data_source === 'drahmi_mcp') {
+    const via = data.data_source === 'drahmi_mcp' ? 'MCP' : 'REST';
+    srcEl.textContent = `✓ Données Drahmi API (${via})`;
     srcEl.style.background = 'rgba(0,132,61,.6)';
   } else {
-    srcEl.textContent = '⚠ Données indisponibles';
+    srcEl.textContent = '⚠ Données indisponibles — analyse qualitative';
     srcEl.style.background = 'rgba(150,80,0,.5)';
   }
 
@@ -436,60 +452,165 @@ function renderResults(data) {
   document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
 }
 
-function markdownToHtml(text) {
-  // 1. Convert markdown tables first (before other replacements)
-  text = text.replace(/((?:^\|.+\|\n?)+)/gm, (block) => {
-    const lines = block.trim().split('\n').filter(l => l.trim());
-    if (lines.length < 2) return block;
-
-    const isSeparator = l => /^\|[\s\-:|]+\|/.test(l);
-    const parseRow = l => l.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
-
-    let html = '<div class="table-responsive my-3"><table class="table table-dark table-bordered table-sm" style="font-size:.88rem;border-color:rgba(255,255,255,.15)">';
-    let inBody = false;
-
-    lines.forEach((line, i) => {
-      if (isSeparator(line)) { inBody = true; return; }
-      const cells = parseRow(line);
-      if (i === 0) {
-        html += '<thead><tr>' + cells.map(c => `<th class="text-center" style="background:rgba(0,132,61,.25);color:#4fc3f7">${applyInline(c)}</th>`).join('') + '</tr></thead><tbody>';
-      } else {
-        html += '<tr>' + cells.map((c, ci) => {
-          const align = ci === 0 ? 'text-start fw-semibold' : 'text-center';
-          return `<td class="${align}">${applyInline(c)}</td>`;
-        }).join('') + '</tr>';
-      }
-    });
-    html += '</tbody></table></div>';
-    return html;
-  });
-
-  // 2. Apply remaining markdown
-  return text
-    .replace(/^# (.+)$/gm,  '<h4 class="fw-bold mt-3 mb-2" style="color:#00843D">$1</h4>')
-    .replace(/^## (.+)$/gm, '<h5 class="fw-bold mt-4 mb-2 border-bottom pb-2" style="color:#4fc3f7">$1</h5>')
-    .replace(/^### (.+)$/gm,'<h6 class="fw-semibold mt-3 mb-1 text-warning">$1</h6>')
-    .replace(/^---+$/gm,    '<hr style="border-color:rgba(255,255,255,.1)">')
-    .replace(/^[-*] (.+)$/gm,'<div class="d-flex gap-2 mb-1"><span style="color:#00843D">▸</span><span>$1</span></div>')
-    .replace(/\n\n/g, '</p><p class="mb-2">')
-    .replace(/\n/g,   '<br>')
-    .replace(/^/,     '<p class="mb-2">')
-    .replace(/$/,     '</p>');
-}
-
+// ─── Helpers ────────────────────────────────────────────────────────────────
 function applyInline(text) {
   return text
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/_(.+?)_/g,       '<em>$1</em>')
     .replace(/🟢\s*HAUSSIER/g, '<span class="badge bg-success">🟢 HAUSSIER</span>')
     .replace(/🟡\s*NEUTRE/g,   '<span class="badge bg-warning text-dark">🟡 NEUTRE</span>')
     .replace(/🔴\s*BAISSIER/g, '<span class="badge bg-danger">🔴 BAISSIER</span>')
-    .replace(/ACHAT FORT/g,    '<span class="badge bg-success">⭐ ACHAT FORT</span>')
-    .replace(/VENTE FORTE/g,   '<span class="badge bg-danger">🔴 VENTE FORTE</span>')
+    .replace(/ACHAT FORT/g,    '<span class="badge bg-success fs-6 px-2 py-1">⭐ ACHAT FORT</span>')
+    .replace(/VENTE FORTE/g,   '<span class="badge bg-danger fs-6 px-2 py-1">🔴 VENTE FORTE</span>')
     .replace(/\bACHAT\b/g,     '<span class="badge bg-success">✅ ACHAT</span>')
     .replace(/\bVENTE\b/g,     '<span class="badge bg-danger">❌ VENTE</span>')
     .replace(/\bNEUTRE\b/g,    '<span class="badge bg-warning text-dark">⚖️ NEUTRE</span>')
     .replace(/\bCONSERVER\b/g, '<span class="badge bg-info text-dark">🔵 CONSERVER</span>')
     .replace(/\bALLÉGER\b/g,   '<span class="badge bg-warning text-dark">🟡 ALLÉGER</span>');
+}
+
+function renderTable(block, isOpinion) {
+  const lines = block.trim().split('\n').filter(l => l.trim());
+  if (lines.length < 2) return block;
+  const isSep   = l => /^\|[\s\-:|]+\|/.test(l);
+  const parseRow = l => l.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+
+  if (isOpinion) {
+    // Special opinion table — no thead, two-column key/value layout
+    let rows = '';
+    lines.forEach(l => {
+      if (isSep(l)) return;
+      const cells = parseRow(l);
+      if (cells.length >= 2)
+        rows += `<tr><td class="opinion-table" style="color:#b0c4d8;font-weight:600;width:44%;padding:.5rem .75rem">${applyInline(cells[0])}</td>`
+              + `<td style="color:#e8f4e8;font-weight:500;padding:.5rem .75rem">${applyInline(cells[1])}</td></tr>`;
+    });
+    return `<div class="table-responsive mt-2 mb-3"><table class="table table-sm mb-0" style="background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.1);border-radius:8px;overflow:hidden">${rows}</table></div>`;
+  }
+
+  let html = '<div class="table-responsive my-3"><table class="table table-dark table-bordered table-sm" style="font-size:.88rem;border-color:rgba(255,255,255,.15)">';
+  let first = true;
+  lines.forEach(l => {
+    if (isSep(l)) return;
+    const cells = parseRow(l);
+    if (first) {
+      html += '<thead><tr>' + cells.map(c => `<th class="text-center" style="background:rgba(0,132,61,.25);color:#4fc3f7;padding:.4rem .6rem">${applyInline(c)}</th>`).join('') + '</tr></thead><tbody>';
+      first = false;
+    } else {
+      html += '<tr>' + cells.map((c, ci) => {
+        const cls = ci === 0 ? 'text-start fw-semibold' : 'text-center';
+        return `<td class="${cls}" style="padding:.35rem .6rem">${applyInline(c)}</td>`;
+      }).join('') + '</tr>';
+    }
+  });
+  return html + '</tbody></table></div>';
+}
+
+function markdownToHtml(text) {
+  const lines  = text.split('\n');
+  let html     = '';
+  let i        = 0;
+  let inOpinion = false;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // ── H2 section header ──────────────────────────────────────────────────
+    if (/^## /.test(line)) {
+      const title      = line.replace(/^## /, '');
+      const wasOpinion = inOpinion;
+      inOpinion = /6\.\s*Opinion/i.test(title);
+      // Close opinion card when leaving section 6
+      if (wasOpinion && !inOpinion) html += '</div>';
+      const numMatch = title.match(/^([^\s]+\s+\d+\.)/);
+      const numPart  = numMatch ? `<span class="section-h2-num">${numMatch[1]}</span>` : '';
+      const restPart = numMatch ? title.slice(numMatch[0].length) : title;
+      if (inOpinion) {
+        html += `<div class="opinion-card mt-4">`;
+        html += `<h5 class="fw-bold mb-3" style="color:#ffd700;border-bottom:1px solid rgba(255,215,0,.2);padding-bottom:.5rem">${numPart}${applyInline(restPart)}</h5>`;
+      } else {
+        html += `<h5 class="fw-bold mt-4 mb-2 border-bottom pb-2" style="color:#4fc3f7">${numPart}${applyInline(restPart)}</h5>`;
+      }
+      i++; continue;
+    }
+
+    // ── H3 sub-header ─────────────────────────────────────────────────────
+    if (/^### /.test(line)) {
+      html += `<h6 class="fw-semibold mt-3 mb-1 text-warning">${applyInline(line.replace(/^### /,''))}</h6>`;
+      i++; continue;
+    }
+
+    // ── HR ────────────────────────────────────────────────────────────────
+    if (/^---+$/.test(line.trim())) {
+      if (inOpinion) { html += '</div>'; inOpinion = false; }
+      html += '<hr style="border-color:rgba(255,255,255,.1)">';
+      i++; continue;
+    }
+
+    // ── Recommendation line (⭐ **RECOMMANDATION : …**) ──────────────────
+    if (inOpinion && /⭐/.test(line)) {
+      const recMatch = line.match(/ACHAT FORT|ACHAT|CONSERVER|ALLÉGER|VENTE FORTE|VENTE/);
+      let cls = 'rec-conserver';
+      if (recMatch) {
+        const r = recMatch[0];
+        cls = r === 'ACHAT FORT' ? 'rec-achat-fort'
+            : r === 'ACHAT'      ? 'rec-achat'
+            : r === 'CONSERVER'  ? 'rec-conserver'
+            : r === 'ALLÉGER'    ? 'rec-alleger'
+            : 'rec-vente';
+      }
+      const label = recMatch ? recMatch[0] : 'OPINION';
+      html += `<div class="mb-3"><span class="rec-badge ${cls}">⭐ ${label}</span></div>`;
+      i++; continue;
+    }
+
+    // ── Markdown table ─────────────────────────────────────────────────────
+    if (/^\|/.test(line)) {
+      let block = '';
+      while (i < lines.length && /^\|/.test(lines[i])) { block += lines[i] + '\n'; i++; }
+      html += renderTable(block, inOpinion);
+      continue;
+    }
+
+    // ── Numbered list: "1. text" or "  1. text" (nested) ──────────────────
+    if (/^\s*\d+\.\s/.test(line)) {
+      const indent  = line.match(/^(\s*)/)[1].length > 0;
+      const content = line.replace(/^\s*\d+\.\s/, '');
+      const numStr  = (line.trim().match(/^(\d+)\./) || ['','•'])[1];
+      const wrap    = indent ? 'md-nested' : '';
+      html += `<div class="md-num-item ${wrap}"><span class="md-num-badge">${numStr}</span><span>${applyInline(content)}</span></div>`;
+      i++; continue;
+    }
+
+    // ── Bullet list: "- text" or "  - text" ───────────────────────────────
+    if (/^\s*[-*]\s/.test(line)) {
+      const indent  = line.match(/^(\s+)/);
+      const content = line.replace(/^\s*[-*]\s/, '');
+      const wrap    = indent ? 'md-nested' : '';
+      html += `<div class="md-bullet ${wrap}"><span class="md-bullet-dot">▸</span><span>${applyInline(content)}</span></div>`;
+      i++; continue;
+    }
+
+    // ── Bold label line "**Forces :**" / "**Risques :**" etc. ─────────────
+    if (/^\s*\*\*.+\*\*\s*:?\s*$/.test(line)) {
+      html += `<div class="fw-semibold mt-2 mb-1" style="color:#a0c8e8">${applyInline(line.trim())}</div>`;
+      i++; continue;
+    }
+
+    // ── Empty line ─────────────────────────────────────────────────────────
+    if (line.trim() === '') {
+      html += '<div class="mb-1"></div>';
+      i++; continue;
+    }
+
+    // ── Plain paragraph ────────────────────────────────────────────────────
+    html += `<p class="mb-2">${applyInline(line)}</p>`;
+    i++;
+  }
+
+  // Close any unclosed opinion card
+  if (inOpinion) html += '</div>';
+  return html;
 }
 
 function renderChart(chartData, ticker) {
