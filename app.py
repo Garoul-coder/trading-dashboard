@@ -254,10 +254,12 @@ def fetch_drahmi_data(ticker):
 # Formatage données pour Claude
 # ---------------------------------------------------------------------------
 def _format_data_for_claude(ticker, sd):
-    if not sd or sd.get("source") != "drahmi" or not sd.get("cours"):
+    if not sd or not sd.get("cours"):
         return (
-            "Données marché non disponibles. "
-            "Formule des hypothèses réalistes basées sur le contexte du marché marocain."
+            "⚠️ Données de marché temps réel indisponibles (blocage réseau côté serveur).\n"
+            "NE PAS inventer de cours, prix ou chiffres financiers.\n"
+            "Produire uniquement une analyse qualitative : activité, secteur, positionnement, "
+            "risques et opportunités connus — sans aucun chiffre inventé."
         )
 
     lines = [f"Données marché — API Drahmi — {sd.get('fetched_at', '')} :\n"]
@@ -455,6 +457,10 @@ def analyze():
         except Exception as e:
             print(f"[WARN] Drahmi failed for {ticker}: {e}")
             sd = {"source": "none", "error": str(e)}
+
+        # Si Drahmi a échoué, on génère quand même une analyse sans données temps réel
+        if not sd.get("cours"):
+            sd["source"] = "none"
 
         analysis = generate_analysis(ticker, sector, sd)
 
