@@ -176,7 +176,7 @@ def get_company_context(ticker):
 # Fetch données via API Drahmi
 # ---------------------------------------------------------------------------
 def _drahmi_headers():
-    key = os.environ.get("DRAHMI_API_KEY") or os.environ.get("trading_dashboard")
+    key = os.environ.get("trading_dashboard") or os.environ.get("DRAHMI_API_KEY")
     if not key:
         raise ValueError("DRAHMI_API_KEY non configurée")
     return {"X-API-Key": key}
@@ -401,7 +401,7 @@ def index():
 def health():
     return jsonify({
         "status":      "ok",
-        "drahmi":      bool(os.environ.get("DRAHMI_API_KEY") or os.environ.get("trading_dashboard")),
+        "drahmi":      bool(os.environ.get("trading_dashboard") or os.environ.get("DRAHMI_API_KEY")),
         "anthropic":   bool(os.environ.get("ANTHROPIC_API_KEY")),
     })
 
