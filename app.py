@@ -415,6 +415,28 @@ def health():
     })
 
 
+@app.route("/debug-drahmi")
+def debug_drahmi():
+    import requests as _r
+    key = os.environ.get("DRAHMI_API_KEY") or os.environ.get("trading_dashboard") or ""
+    headers = {
+        "X-API-Key": key,
+        "Authorization": f"Bearer {key}",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json",
+    }
+    try:
+        r = _r.get("https://api.drahmi.app/api/v1/stocks/SMI", headers=headers, timeout=8)
+        return jsonify({
+            "status_code": r.status_code,
+            "key_prefix": key[:20] + "..." if key else "VIDE",
+            "key_len": len(key),
+            "response": r.json() if r.status_code == 200 else r.text[:200],
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+
 @app.route("/analyze", methods=["POST"])
 def analyze():
     try:
