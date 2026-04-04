@@ -1,4 +1,8 @@
 import os
+import json
+import time
+import threading
+import queue
 import requests as http
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify
@@ -247,7 +251,220 @@ def fetch_drahmi_data(ticker):
     except Exception as e:
         print(f"[DRAHMI] {ticker} signals ERROR: {e}")
 
+    # ── Fallback MCP si REST bloqué (Cloudflare) ─────────────────────────────
+    if not result.get("cours"):
+        print(f"[DRAHMI] REST sans cours pour {ticker} — tentative MCP fallback")
+        mcp_result = fetch_via_mcp(ticker)
+        if mcp_result and mcp_result.get("cours"):
+            print(f"[MCP] ✅ {ticker} → {mcp_result['cours']} MAD via MCP")
+            return mcp_result
+        else:
+            print(f"[MCP] ❌ MCP fallback aussi sans résultat pour {ticker}")
+
     return result
+
+
+# ---------------------------------------------------------------------------
+# Fetch données via MCP SSE (fallback si REST Cloudflare-bloqué)
+# ---------------------------------------------------------------------------
+def fetch_via_mcp(ticker):
+    """
+    Tente de récupérer les données via le endpoint MCP SSE de Drahmi.
+    Protocol : GET /sse → event:endpoint → POST /messages → event:message
+    Utilisé en fallback si api.drahmi.app est bloqué par Cloudflare.
+    """
+    key = os.environ.get("DRAHMI_API_KEY") or os.environ.get("trading_dashboard") or ""
+    if not key:
+        return None
+
+    mcp_base  = "https://mcp.drahmi.app"
+    sse_url   = f"{mcp_base}/sse"
+    req_hdrs  = {
+        "Authorization": f"Bearer {key}",
+        "Accept":        "text/event-stream",
+        "Cache-Control": "no-cache",
+    }
+
+    # ── Étape 1 : connexion SSE, récupère l'URL /messages?sessionId=... ──────
+    messages_url = None
+    sse_queue    = queue.Queue()
+
+    def _sse_reader(sess, url):
+        """Lit le stream SSE dans un thread séparé."""
+        try:
+            with sess.get(url, headers=req_hdrs, params={"api_key": key},
+                          stream=True, timeout=12) as r:
+                if r.status_code != 200:
+                    sse_queue.put(("status_error", r.status_code, r.text[:200]))
+                    return
+                event_name = None
+                for raw in r.iter_lines(decode_unicode=True):
+                    sse_queue.put(("line", raw))
+                    # Signal d'arrêt posé par le thread principal
+                    if not sse_queue.empty():
+                        item = sse_queue.queue[0]
+                        if isinstance(item, tuple) and item[0] == "stop":
+                            return
+        except Exception as e:
+            sse_queue.put(("error", str(e)))
+
+    session = http.Session()
+    t = threading.Thread(target=_sse_reader, args=(session, sse_url), daemon=True)
+    t.start()
+
+    # Attend l'événement endpoint (max 8 s)
+    current_event = None
+    deadline = 8
+    start = time.time()
+    while time.time() - start < deadline:
+        try:
+            item = sse_queue.get(timeout=1)
+        except queue.Empty:
+            continue
+
+        if item[0] in ("status_error", "error"):
+            print(f"[MCP] SSE error: {item[1:]}")
+            return None
+
+        line = item[1]
+        if line.startswith("event:"):
+            current_event = line.split(":", 1)[1].strip()
+        elif line.startswith("data:"):
+            data_str = line.split(":", 1)[1].strip()
+            if current_event == "endpoint" or messages_url is None:
+                # L'URL peut être relative (/messages?sessionId=...) ou complète
+                if data_str.startswith("/"):
+                    messages_url = mcp_base + data_str
+                elif data_str.startswith("http"):
+                    messages_url = data_str
+                elif data_str.startswith("{"):
+                    try:
+                        d = json.loads(data_str)
+                        ep = d.get("endpoint") or d.get("url") or d.get("uri")
+                        if ep:
+                            messages_url = mcp_base + ep if ep.startswith("/") else ep
+                    except Exception:
+                        pass
+                if messages_url:
+                    break
+
+    if not messages_url:
+        print(f"[MCP] Impossible d'obtenir l'URL messages")
+        return None
+
+    print(f"[MCP] messages_url = {messages_url}")
+    post_hdrs = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type":  "application/json",
+        "Accept":        "application/json, text/event-stream",
+    }
+
+    # ── Étape 2 : initialize ─────────────────────────────────────────────────
+    try:
+        init_payload = {
+            "jsonrpc": "2.0", "id": 1,
+            "method":  "initialize",
+            "params":  {
+                "protocolVersion": "2024-11-05",
+                "capabilities":    {},
+                "clientInfo":      {"name": "trading-dashboard", "version": "1.0"},
+            },
+        }
+        ri = session.post(messages_url, json=init_payload, headers=post_hdrs, timeout=8)
+        print(f"[MCP] initialize → {ri.status_code}")
+    except Exception as e:
+        print(f"[MCP] initialize error: {e}")
+        return None
+
+    # ── Étape 3 : tools/call ─────────────────────────────────────────────────
+    # Essaie plusieurs noms de tools courants Drahmi
+    tool_candidates = [
+        ("get_stock_data",   {"ticker": ticker}),
+        ("getStock",         {"ticker": ticker}),
+        ("stock_info",       {"symbol": ticker}),
+        ("get_stock",        {"ticker": ticker}),
+        ("get_ticker_info",  {"ticker": ticker}),
+    ]
+
+    for tool_name, tool_args in tool_candidates:
+        try:
+            call_payload = {
+                "jsonrpc": "2.0", "id": 2,
+                "method":  "tools/call",
+                "params":  {"name": tool_name, "arguments": tool_args},
+            }
+            rc = session.post(messages_url, json=call_payload, headers=post_hdrs, timeout=10)
+            print(f"[MCP] tools/call {tool_name} → {rc.status_code}")
+
+            if rc.status_code == 200:
+                try:
+                    body = rc.json()
+                    # Cherche le résultat dans la réponse JSON-RPC
+                    result_data = body.get("result") or body
+                    content = result_data.get("content") if isinstance(result_data, dict) else None
+                    if content:
+                        # Parfois retourné comme liste de {type, text}
+                        if isinstance(content, list):
+                            for c in content:
+                                if c.get("type") == "text":
+                                    try:
+                                        parsed = json.loads(c["text"])
+                                        return _normalize_mcp_stock(parsed, ticker)
+                                    except Exception:
+                                        pass
+                        elif isinstance(content, dict):
+                            return _normalize_mcp_stock(content, ticker)
+                    # Parfois la donnée est directement dans result
+                    if isinstance(result_data, dict) and (
+                        result_data.get("price") or result_data.get("cours") or result_data.get("close")
+                    ):
+                        return _normalize_mcp_stock(result_data, ticker)
+                except Exception as e:
+                    print(f"[MCP] parse error: {e}")
+        except Exception as e:
+            print(f"[MCP] tools/call {tool_name} error: {e}")
+
+    # ── Étape 4 : si tools/call n'a rien donné, essaie tools/list ────────────
+    try:
+        list_payload = {"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}}
+        rl = session.post(messages_url, json=list_payload, headers=post_hdrs, timeout=8)
+        if rl.status_code == 200:
+            tools_body = rl.json()
+            tools = (tools_body.get("result") or {}).get("tools", [])
+            tool_names = [t.get("name") for t in tools]
+            print(f"[MCP] tools disponibles: {tool_names}")
+            # Persiste dans les logs pour debugging
+    except Exception as e:
+        print(f"[MCP] tools/list error: {e}")
+
+    return None
+
+
+def _normalize_mcp_stock(d, ticker):
+    """Normalise la réponse MCP en format attendu par _format_data_for_claude."""
+    if not d:
+        return None
+    # Champs possibles selon l'implémentation Drahmi
+    cours = (d.get("price") or d.get("cours") or d.get("close")
+             or d.get("lastPrice") or d.get("last_price"))
+    if not cours:
+        return None
+    return {
+        "source":        "drahmi_mcp",
+        "ticker":        ticker,
+        "fetched_at":    datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+        "cours":         float(cours),
+        "variation":     d.get("change") or d.get("variation") or d.get("changePercent"),
+        "volume":        d.get("volume") or d.get("volume24h"),
+        "capitalisation":d.get("marketCap") or d.get("capitalisation"),
+        "per":           d.get("peRatio") or d.get("per"),
+        "beta":          d.get("beta"),
+        "div_yield":     d.get("dividendYield") or d.get("div_yield"),
+        "week52_high":   d.get("week52High") or d.get("high52"),
+        "week52_low":    d.get("week52Low")  or d.get("low52"),
+        "name":          d.get("name") or d.get("companyName"),
+        "signals":       d.get("signals", []),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -419,24 +636,56 @@ def health():
 
 @app.route("/debug-drahmi")
 def debug_drahmi():
-    import requests as _r
     key = os.environ.get("DRAHMI_API_KEY") or os.environ.get("trading_dashboard") or ""
-    headers = {
-        "X-API-Key": key,
-        "Authorization": f"Bearer {key}",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    out = {"key_prefix": (key[:20] + "...") if key else "VIDE", "key_len": len(key)}
+
+    # ── Test 1 : REST API ────────────────────────────────────────────────────
+    rest_hdrs = {
+        "X-API-Key": key, "Authorization": f"Bearer {key}",
         "Accept": "application/json",
     }
     try:
-        r = _r.get("https://api.drahmi.app/api/v1/stocks/SMI", headers=headers, timeout=8)
-        return jsonify({
+        r = http.get("https://api.drahmi.app/api/v1/stocks/SMI",
+                     headers=rest_hdrs, timeout=8)
+        out["rest_api"] = {
             "status_code": r.status_code,
-            "key_prefix": key[:20] + "..." if key else "VIDE",
-            "key_len": len(key),
-            "response": r.json() if r.status_code == 200 else r.text[:200],
-        })
+            "response": r.json() if r.status_code == 200 else r.text[:300],
+        }
     except Exception as e:
-        return jsonify({"error": str(e)})
+        out["rest_api"] = {"error": str(e)}
+
+    # ── Test 2 : MCP SSE (juste l'accessibilité + premier event) ────────────
+    mcp_url = "https://mcp.drahmi.app/sse"
+    mcp_hdrs = {
+        "Authorization": f"Bearer {key}",
+        "Accept": "text/event-stream",
+        "Cache-Control": "no-cache",
+    }
+    try:
+        r2 = http.get(mcp_url, headers=mcp_hdrs, params={"api_key": key},
+                      stream=True, timeout=8)
+        lines = []
+        for raw in r2.iter_lines(decode_unicode=True):
+            lines.append(raw)
+            if len(lines) >= 10:
+                break
+        r2.close()
+        out["mcp_sse"] = {
+            "status_code": r2.status_code,
+            "response_headers": dict(r2.headers),
+            "first_lines": lines,
+        }
+    except Exception as e:
+        out["mcp_sse"] = {"error": str(e)}
+
+    # ── Test 3 : MCP full fetch SMI ──────────────────────────────────────────
+    try:
+        mcp_data = fetch_via_mcp("SMI")
+        out["mcp_fetch_SMI"] = mcp_data if mcp_data else "null (aucune donnée)"
+    except Exception as e:
+        out["mcp_fetch_SMI"] = {"error": str(e)}
+
+    return jsonify(out)
 
 
 @app.route("/analyze", methods=["POST"])
