@@ -10,6 +10,7 @@ except ImportError:
     pass
 import threading
 import queue
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests as http
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify
@@ -751,6 +752,316 @@ def analyze():
     except Exception as e:
         print(f"[ERROR] /analyze: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Scan sectoriel — opportunités hors banques
+# ---------------------------------------------------------------------------
+
+# Tickers éligibles au scan (hors secteur bancaire)
+SCAN_TICKERS = [
+    # Télécommunications
+    "IAM",
+    # Technologies
+    "M2M", "HPS", "DISWAY", "S2M",
+    # Mines
+    "SMI", "MNG", "CMT",
+    # Énergie
+    "TMA", "GAZ", "TQM", "MOX",
+    # Agroalimentaire
+    "SBM", "LES", "CSR", "MUT", "OUL", "COL",
+    # Assurances
+    "WAA", "ACM",
+    # Services financiers
+    "SLF", "AFMA", "EQD", "MAL",
+    # Immobilier
+    "DHO", "RDS", "ALM", "IMM", "ARA",
+    # Matériaux de construction
+    "CMR", "LHM",
+    # BTP
+    "TGCC", "JET",
+    # Distribution
+    "LBV", "STK",
+    # Industrie
+    "SID", "SNEP", "ADH", "DEL",
+    # Santé
+    "AKD", "PRO", "SOT",
+    # Transport & maritime
+    "CTM", "MSA",
+    # Tourisme
+    "RIS",
+]
+
+# Cache en mémoire (TTL 15 min)
+_scan_cache: dict = {"data": None, "ts": 0.0}
+_SCAN_TTL = 900
+
+
+def _fetch_one_ticker(ticker: str):
+    """Fetch un ticker pour le scan sectoriel (1 seul appel Drahmi)."""
+    try:
+        headers = _drahmi_headers()
+        r = http.get(f"{DRAHMI_BASE}/stocks/{ticker}", headers=headers, timeout=8)
+        if r.status_code == 200:
+            d = r.json()
+            cours = d.get("price")
+            if not cours:
+                return None
+            return {
+                "ticker":         ticker,
+                "sector":         SECTORS.get(ticker, "Divers"),
+                "name":           d.get("name") or ticker,
+                "cours":          float(cours),
+                "variation":      d.get("change") or 0.0,
+                "volume":         d.get("volume24h") or 0,
+                "capitalisation": d.get("marketCap") or 0,
+                "per":            d.get("peRatio"),
+                "div_yield":      d.get("dividendYield") or 0.0,
+                "week52_high":    d.get("week52High"),
+                "week52_low":     d.get("week52Low"),
+                "beta":           d.get("beta"),
+            }
+    except Exception as e:
+        print(f"[SCAN] {ticker}: {e}")
+    return None
+
+
+def compute_opportunity_score(sd: dict):
+    """
+    Score 0-100 combinant :
+      - Position dans range 52S (proximité du support)  → 40 pts max
+      - Momentum séance                                  → 20 pts max
+      - Rendement dividende                              → 20 pts max
+      - Valorisation PER                                 → 10 pts max
+      - Potentiel retour vers 52S haut                   → 10 pts max
+    Retourne (score: int, reasons: list[str])
+    """
+    score   = 0
+    reasons = []
+    cours   = sd.get("cours", 0)
+    high52  = sd.get("week52_high")
+    low52   = sd.get("week52_low")
+    var     = float(sd.get("variation") or 0)
+    dy      = float(sd.get("div_yield") or 0)
+    per     = sd.get("per")
+
+    # ── Position 52S ────────────────────────────────────────────────────────
+    if high52 and low52 and high52 > low52:
+        rng    = high52 - low52
+        pos    = (cours - low52) / rng          # 0 = bas annuel, 1 = haut annuel
+        upside = (high52 - cours) / cours * 100
+
+        if pos <= 0.15:
+            score += 25
+            reasons.append(f"Très proche du support annuel ({low52:,.0f} MAD)")
+        elif pos <= 0.35:
+            score += 40
+            reasons.append(f"Zone d'achat historique — bas 52S : {low52:,.0f} MAD")
+        elif pos <= 0.55:
+            score += 22
+            reasons.append("Cours sous la médiane annuelle")
+        elif pos <= 0.70:
+            score += 12
+        else:
+            score += 4
+
+        if upside >= 40:
+            score += 10
+            reasons.append(f"Potentiel de +{upside:.0f}% vers résistance 52S")
+        elif upside >= 20:
+            score += 5
+            reasons.append(f"Rebond possible : +{upside:.0f}% vers 52S haut")
+
+    # ── Momentum séance ─────────────────────────────────────────────────────
+    if -1.5 <= var < 0:
+        score += 18
+        reasons.append(f"Légère correction ({var:+.1f}%) = point d'entrée favorable")
+    elif 0 <= var <= 2.0:
+        score += 20
+        reasons.append(f"Momentum positif ({var:+.1f}%)")
+    elif 2.0 < var <= 5.0:
+        score += 12
+    elif var < -3.0:
+        score += 2
+    else:
+        score += 7
+
+    # ── Rendement dividende ─────────────────────────────────────────────────
+    if dy >= 6.0:
+        score += 20
+        reasons.append(f"Rendement dividende exceptionnel : {dy:.1f}%")
+    elif dy >= 4.0:
+        score += 14
+        reasons.append(f"Fort rendement dividende : {dy:.1f}%")
+    elif dy >= 2.0:
+        score += 7
+        reasons.append(f"Dividende : {dy:.1f}%")
+
+    # ── PER ──────────────────────────────────────────────────────────────────
+    if per and 5 < float(per) < 15:
+        score += 10
+        reasons.append(f"PER attractif : {float(per):.1f}x")
+    elif per and 15 <= float(per) <= 22:
+        score += 5
+
+    return min(score, 100), reasons
+
+
+def _compute_entry_and_target(sd: dict, score: int):
+    """Prix d'entrée et objectif calculés depuis la position technique."""
+    cours = sd.get("cours", 0)
+    high52 = sd.get("week52_high") or cours * 1.20
+    low52  = sd.get("week52_low")  or cours * 0.80
+
+    # Entrée : d'autant plus proche du cours que le score est élevé
+    if score >= 70:
+        entry = round(cours * 0.985, 1)
+    elif score >= 55:
+        entry = round(cours * 0.970, 1)
+    elif score >= 40:
+        entry = round(cours * 0.950, 1)
+    else:
+        entry = round(max(cours * 0.90, low52 * 1.03), 1)
+
+    # Objectif : 60 % du chemin vers le 52S haut (conservateur)
+    gap    = high52 - entry
+    target = round(entry + gap * 0.60, 1)
+
+    upside_pct = round((target - entry) / entry * 100, 1) if entry else 0
+    return entry, target, upside_pct
+
+
+@app.route("/opportunites")
+def opportunites_page():
+    return render_template("opportunites.html")
+
+
+@app.route("/api/scan-secteurs", methods=["POST"])
+def scan_secteurs():
+    global _scan_cache
+    force = (request.get_json(silent=True) or {}).get("force", False)
+
+    # Retour cache si récent
+    if (not force
+            and _scan_cache["data"]
+            and time.time() - _scan_cache["ts"] < _SCAN_TTL):
+        resp = dict(_scan_cache["data"])
+        resp["cached"]    = True
+        resp["cache_age"] = int(time.time() - _scan_cache["ts"])
+        return jsonify(resp)
+
+    # ── Scan parallèle (max 22 s pour laisser la marge avant timeout 30 s) ──
+    raw: list[dict] = []
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        futures = {ex.submit(_fetch_one_ticker, t): t for t in SCAN_TICKERS}
+        try:
+            for f in as_completed(futures, timeout=22):
+                r = f.result()
+                if r and r.get("cours"):
+                    score, reasons = compute_opportunity_score(r)
+                    entry, target, upside_pct = _compute_entry_and_target(r, score)
+                    r.update({
+                        "score":      score,
+                        "reasons":    reasons,
+                        "entry":      entry,
+                        "target":     target,
+                        "upside_pct": upside_pct,
+                        "signal":     ("ACHAT"      if score >= 68
+                                       else "SURVEILLER" if score >= 48
+                                       else "NEUTRE"),
+                    })
+                    raw.append(r)
+        except Exception as e:
+            print(f"[SCAN] ThreadPool timeout/error: {e}")
+
+    if not raw:
+        return jsonify({"error": "Aucune donnée Drahmi disponible"}), 503
+
+    raw.sort(key=lambda x: x["score"], reverse=True)
+
+    # Grouper par secteur (trié par meilleur score)
+    sectors_map: dict = {}
+    for r in raw:
+        sectors_map.setdefault(r["sector"], []).append(r)
+    # Trier les secteurs par score max de leur meilleure valeur
+    sectors_sorted = dict(
+        sorted(sectors_map.items(), key=lambda kv: kv[1][0]["score"], reverse=True)
+    )
+
+    payload = {
+        "cached":      False,
+        "fetched_at":  datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+        "total":       len(raw),
+        "top_picks":   raw[:12],
+        "by_sector":   sectors_sorted,
+        "buy_count":   sum(1 for r in raw if r["signal"] == "ACHAT"),
+        "watch_count": sum(1 for r in raw if r["signal"] == "SURVEILLER"),
+        "neutral_count": sum(1 for r in raw if r["signal"] == "NEUTRE"),
+    }
+    _scan_cache["data"] = payload
+    _scan_cache["ts"]   = time.time()
+    return jsonify(payload)
+
+
+@app.route("/api/analyse-opportunites", methods=["POST"])
+def analyse_opportunites():
+    """Analyse IA (Claude) des top picks issus du scan sectoriel."""
+    body      = request.get_json(force=True, silent=True) or {}
+    top_picks = body.get("top_picks", [])
+    if not top_picks:
+        return jsonify({"error": "Aucun pick fourni"}), 400
+
+    # Construire le contexte compact
+    lines = []
+    for r in top_picks[:10]:
+        h = r.get("week52_high") or "?"
+        l = r.get("week52_low")  or "?"
+        lines.append(
+            f"- **{r['ticker']}** ({r['sector']}) : {r['cours']:,.1f} MAD "
+            f"({r.get('variation', 0):+.1f}%) | score={r['score']}/100 | "
+            f"entrée={r['entry']:,.1f} | objectif={r['target']:,.1f} (+{r['upside_pct']}%) | "
+            f"div={r.get('div_yield', 0):.1f}% | PER={r.get('per') or '—'} | "
+            f"52S [{l}–{h}] | "
+            f"{'; '.join(r.get('reasons', [])[:2])}"
+        )
+    ctx = "\n".join(lines)
+
+    prompt = f"""Analyste financier BVC expert. Tu reçois le scan des meilleures opportunités \
+boursières hors secteur bancaire, classées par score :
+
+{ctx}
+
+Produis une analyse concise en français (style flash note broker) :
+
+## 🎯 1. Top 3 Opportunités Prioritaires
+
+Pour chacune, structure ainsi :
+1. **[TICKER]** — [Secteur]
+   - Thèse d'investissement (2 phrases max)
+   - Prix d'entrée : X MAD | Objectif 6M : Y MAD (+Z%) | Stop-loss : W MAD
+   - Catalyseur principal à surveiller
+
+## 📊 2. Sentiment Sectoriel
+
+| Secteur | Signal | Meilleure valeur | Commentaire court |
+|---|---|---|---|
+(inclure les 5 secteurs les plus attractifs)
+
+## ⚠️ 3. Risques Principaux
+1. Risque macro/marché global
+2. Risque sectoriel spécifique
+
+## 🧠 4. Stratégie d'Allocation
+3-4 lignes — répartition suggérée entre secteurs, timing et conditions d'entrée."""
+
+    client = get_client()
+    response = client.messages.create(
+        model="claude-haiku-4-5",
+        max_tokens=1600,
+        messages=[{"role": "user", "content": prompt}],
+        timeout=25,
+    )
+    return jsonify({"analysis": response.content[0].text})
 
 
 if __name__ == "__main__":

@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BVC — Opportunités Sectorielles</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet" />
+  <style>
+    :root {
+      --bvc-green: #00843D;
+      --bvc-dark:  #1a1a2e;
+      --card-bg:   #16213e;
+      --accent:    #0f3460;
+    }
+    * { box-sizing: border-box; }
+    body { background: var(--bvc-dark); color: #e0e0e0; font-family: 'Segoe UI', sans-serif; min-height: 100vh; }
+
+    /* ── Nav ────────────────────────────────────────────────────────────── */
+    .navbar-brand span { color: var(--bvc-green); }
+    .nav-link-custom {
+      color: rgba(255,255,255,.6); font-size: .88rem; padding: .3rem .8rem;
+      border-radius: 6px; transition: background .15s, color .15s; text-decoration: none;
+    }
+    .nav-link-custom:hover, .nav-link-custom.active { background: rgba(0,132,61,.2); color: #fff; }
+
+    /* ── Hero ───────────────────────────────────────────────────────────── */
+    .hero-card {
+      background: linear-gradient(135deg, var(--accent) 0%, var(--card-bg) 100%);
+      border: 1px solid rgba(0,132,61,.3); border-radius: 16px;
+    }
+    .stat-pill {
+      background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1);
+      border-radius: 10px; padding: .5rem 1rem; text-align: center; min-width: 90px;
+    }
+    .stat-pill .num { font-size: 1.5rem; font-weight: 800; }
+    .stat-pill .lbl { font-size: .7rem; text-transform: uppercase; letter-spacing: .05em; opacity: .65; }
+
+    /* ── Spinner ────────────────────────────────────────────────────────── */
+    .spinner-overlay {
+      display: none; position: fixed; inset: 0; background: rgba(10,10,30,.85);
+      z-index: 9999; flex-direction: column; align-items: center; justify-content: center;
+    }
+    .spinner-overlay.active { display: flex; }
+
+    /* ── Opportunity card ───────────────────────────────────────────────── */
+    .opp-card {
+      background: var(--card-bg); border-radius: 14px;
+      border: 1px solid rgba(255,255,255,.07);
+      transition: transform .2s, border-color .2s; overflow: hidden;
+    }
+    .opp-card:hover { transform: translateY(-3px); border-color: rgba(0,132,61,.35); }
+    .opp-card.signal-achat    { border-top: 3px solid #00c853; }
+    .opp-card.signal-surveiller { border-top: 3px solid #ffd600; }
+    .opp-card.signal-neutre   { border-top: 3px solid #546e7a; }
+
+    /* Score gauge */
+    .score-track { height: 7px; background: rgba(255,255,255,.1); border-radius: 4px; overflow: hidden; }
+    .score-fill  { height: 100%; border-radius: 4px; transition: width .6s ease; }
+    .score-fill.high   { background: linear-gradient(90deg,#00843D,#00e676); }
+    .score-fill.medium { background: linear-gradient(90deg,#f9a825,#ffd600); }
+    .score-fill.low    { background: linear-gradient(90deg,#455a64,#78909c); }
+
+    .signal-badge {
+      font-size: .72rem; font-weight: 700; padding: .22rem .6rem;
+      border-radius: 20px; letter-spacing: .04em;
+    }
+    .badge-achat      { background: rgba(0,200,83,.18); color: #00e676; border: 1px solid rgba(0,200,83,.35); }
+    .badge-surveiller { background: rgba(255,214,0,.15); color: #ffd600; border: 1px solid rgba(255,214,0,.3); }
+    .badge-neutre     { background: rgba(84,110,122,.2); color: #90a4ae; border: 1px solid rgba(84,110,122,.3); }
+
+    .price-entry {
+      background: rgba(0,132,61,.12); border: 1px solid rgba(0,132,61,.25);
+      border-radius: 8px; padding: .45rem .75rem;
+    }
+    .reason-dot { color: #00843D; font-size: .75rem; margin-top: .15rem; flex-shrink: 0; }
+
+    /* ── Sector section ─────────────────────────────────────────────────── */
+    .sector-header {
+      display: flex; align-items: center; gap: .6rem;
+      border-bottom: 1px solid rgba(255,255,255,.08); padding-bottom: .5rem; margin-bottom: .8rem;
+    }
+    .sector-icon {
+      width: 32px; height: 32px; border-radius: 8px;
+      display: flex; align-items: center; justify-content: center; font-size: .95rem; flex-shrink: 0;
+    }
+
+    /* ── AI Analysis ────────────────────────────────────────────────────── */
+    .ai-card { background: var(--card-bg); border: 1px solid rgba(0,132,61,.25); border-radius: 14px; }
+    .ai-card h5 { font-size: 1rem; border-bottom: 1px solid rgba(255,255,255,.1); padding-bottom: .5rem; }
+    .md-bullet     { display: flex; gap: .5rem; margin-bottom: .3rem; align-items: flex-start; }
+    .md-bullet-dot { color: var(--bvc-green); flex-shrink: 0; font-size: .8rem; margin-top: .2rem; }
+    .md-num-item   { display: flex; gap: .5rem; margin-bottom: .3rem; align-items: flex-start; }
+    .md-num-badge  { background: rgba(0,132,61,.25); color: #4fc3f7; border-radius: 50%;
+                     width: 1.25rem; height: 1.25rem; font-size: .7rem; font-weight: 700;
+                     display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: .1rem; }
+    .section-h2-num { display: inline-block; background: rgba(0,132,61,.2); color: #4fc3f7;
+                      border-radius: 4px; padding: .08rem .4rem; font-size: .78rem; font-weight: 700; margin-right: .35rem; }
+
+    #results  { display: none; }
+    #aiSection { display: none; }
+    .ticker-tag { background: var(--bvc-green); color: #fff; font-weight: 800;
+                  border-radius: 6px; padding: .15rem .55rem; font-size: .85rem; }
+    .cache-tag { background: rgba(255,160,0,.15); color: #ffa000;
+                 border: 1px solid rgba(255,160,0,.3); border-radius: 20px;
+                 font-size: .7rem; padding: .15rem .55rem; }
+  </style>
+</head>
+<body>
+
+<!-- Spinner -->
+<div class="spinner-overlay" id="spinner">
+  <div class="spinner-border text-success mb-3" style="width:3rem;height:3rem;"></div>
+  <p class="fw-semibold text-white mb-1" id="spinnerMsg">Scan sectoriel en cours…</p>
+  <small class="text-secondary">Analyse de toutes les valeurs BVC hors banques</small>
+</div>
+
+<!-- Navbar -->
+<nav class="navbar navbar-dark px-4 py-3" style="background:rgba(0,0,0,.4);border-bottom:1px solid rgba(0,132,61,.2);">
+  <a class="navbar-brand fw-bold fs-5" href="/">
+    <i class="bi bi-graph-up-arrow me-2"></i>BVC <span>Trading</span> Dashboard
+  </a>
+  <div class="d-flex align-items-center gap-2">
+    <a href="/"            class="nav-link-custom"><i class="bi bi-search me-1"></i>Analyse</a>
+    <a href="/opportunites" class="nav-link-custom active"><i class="bi bi-lightning-charge me-1"></i>Opportunités</a>
+  </div>
+</nav>
+
+<div class="container py-4" style="max-width:1200px;">
+
+  <!-- Hero -->
+  <div class="hero-card p-4 mb-4">
+    <div class="d-flex flex-wrap align-items-start justify-content-between gap-3">
+      <div>
+        <h1 class="fs-4 fw-bold mb-1">
+          <i class="bi bi-lightning-charge-fill text-warning me-2"></i>Opportunités Sectorielles BVC
+        </h1>
+        <p class="text-secondary mb-0" style="font-size:.88rem;">
+          Scan automatique des valeurs hors secteur bancaire — score d'opportunité basé sur
+          position 52S, momentum, dividende et valorisation (données Drahmi API).
+        </p>
+      </div>
+      <button class="btn btn-success fw-bold px-4" id="scanBtn" onclick="runScan(false)">
+        <i class="bi bi-radar me-1"></i> Lancer le scan
+      </button>
+    </div>
+
+    <!-- Stats row -->
+    <div id="statsRow" class="d-flex flex-wrap gap-3 mt-4" style="display:none !important;"></div>
+  </div>
+
+  <!-- Error -->
+  <div id="errorAlert" class="alert alert-danger d-none"></div>
+
+  <!-- Results -->
+  <div id="results">
+
+    <!-- Top Picks -->
+    <div class="d-flex align-items-center justify-content-between mb-3">
+      <h5 class="fw-bold mb-0" style="color:#4fc3f7;">
+        <i class="bi bi-trophy-fill text-warning me-2"></i>Meilleures Opportunités
+      </h5>
+      <div class="d-flex gap-2 align-items-center">
+        <span id="cacheTag" class="cache-tag d-none">
+          <i class="bi bi-clock me-1"></i>Cache <span id="cacheAge"></span>
+        </span>
+        <span id="fetchedAt" class="text-secondary" style="font-size:.75rem;"></span>
+      </div>
+    </div>
+
+    <div id="topPicksGrid" class="row g-3 mb-5"></div>
+
+    <!-- AI Analysis button -->
+    <div class="text-center my-4" id="aiBtn">
+      <button class="btn btn-outline-warning px-5 fw-semibold" onclick="runAiAnalysis()">
+        <i class="bi bi-cpu-fill me-2"></i>Générer l'analyse IA des opportunités
+      </button>
+      <div class="text-secondary mt-1" style="font-size:.78rem;">Utilise 1 crédit Claude · ~15 secondes</div>
+    </div>
+
+    <!-- AI Analysis section -->
+    <div id="aiSection" class="ai-card p-4 mb-5">
+      <h5 class="fw-bold" style="color:#ffd700;">
+        <i class="bi bi-stars me-2"></i>Analyse IA — Stratégie d'Opportunités
+      </h5>
+      <div id="aiContent"></div>
+    </div>
+
+    <!-- By Sector -->
+    <h5 class="fw-bold mb-3" style="color:#4fc3f7;">
+      <i class="bi bi-grid-3x3-gap-fill me-2"></i>Vue par Secteur
+    </h5>
+    <div id="sectorGrid" class="row g-3 mb-4"></div>
+
+  </div>
+</div>
+
+<footer class="text-center text-secondary py-3" style="font-size:.8rem;border-top:1px solid rgba(255,255,255,.05);">
+  Propulsé par <strong>Claude Haiku 4.5</strong> · Données BVC via <strong>Drahmi API</strong>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// ─── Globals ────────────────────────────────────────────────────────────────
+let _topPicks = [];
+
+// ─── Sector icons & colors ───────────────────────────────────────────────────
+const SECTOR_META = {
+  "Télécommunications":       { icon: "bi-telephone-fill",      color: "#00796b" },
+  "Technologies":             { icon: "bi-cpu-fill",             color: "#1565c0" },
+  "Mines":                    { icon: "bi-gem",                  color: "#f57f17" },
+  "Énergie":                  { icon: "bi-lightning-fill",       color: "#e65100" },
+  "Agroalimentaire":          { icon: "bi-egg-fried",            color: "#2e7d32" },
+  "Assurances":               { icon: "bi-shield-fill-check",    color: "#00695c" },
+  "Services financiers":      { icon: "bi-bank2",                color: "#1a237e" },
+  "Crédit à la consommation": { icon: "bi-credit-card-fill",     color: "#4a148c" },
+  "Crédit-bail":              { icon: "bi-file-earmark-text-fill",color: "#37474f" },
+  "Immobilier":               { icon: "bi-building-fill",        color: "#6a1b9a" },
+  "Matériaux de construction":{ icon: "bi-bricks",               color: "#b71c1c" },
+  "BTP":                      { icon: "bi-tools",                color: "#880e4f" },
+  "Distribution":             { icon: "bi-cart4",                color: "#33691e" },
+  "Industrie sidérurgique":   { icon: "bi-gear-fill",            color: "#4e342e" },
+  "Industrie":                { icon: "bi-gear-wide-connected",  color: "#37474f" },
+  "Industrie chimique":       { icon: "bi-flask-fill",           color: "#1b5e20" },
+  "Pharmacie":                { icon: "bi-capsule",              color: "#ad1457" },
+  "Santé":                    { icon: "bi-heart-pulse-fill",     color: "#c62828" },
+  "Transport":                { icon: "bi-truck",                color: "#263238" },
+  "Transport maritime":       { icon: "bi-ship",                 color: "#01579b" },
+  "Tourisme & Loisirs":       { icon: "bi-umbrella-fill",        color: "#0277bd" },
+  "Automobile":               { icon: "bi-car-front-fill",       color: "#37474f" },
+  "Distribution industrielle":{ icon: "bi-boxes",                color: "#546e7a" },
+};
+
+function sectorMeta(sec) {
+  return SECTOR_META[sec] || { icon: "bi-bar-chart-fill", color: "#455a64" };
+}
+
+// ─── Formatting helpers ───────────────────────────────────────────────────────
+function fmt(n, dec = 2) {
+  if (n == null || n === '') return '—';
+  return parseFloat(n).toLocaleString('fr-FR', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+}
+
+function scoreClass(s) {
+  return s >= 68 ? 'high' : s >= 48 ? 'medium' : 'low';
+}
+function signalBadge(sig) {
+  if (sig === 'ACHAT')      return `<span class="signal-badge badge-achat">✅ ACHAT</span>`;
+  if (sig === 'SURVEILLER') return `<span class="signal-badge badge-surveiller">👁 SURVEILLER</span>`;
+  return `<span class="signal-badge badge-neutre">⬜ NEUTRE</span>`;
+}
+function varHtml(v) {
+  if (v == null) return '<span class="text-secondary">—</span>';
+  const cls = v > 0 ? 'text-success' : v < 0 ? 'text-danger' : 'text-secondary';
+  return `<span class="${cls} fw-semibold">${v >= 0 ? '+' : ''}${fmt(v, 2)}%</span>`;
+}
+
+// ─── Render a single opportunity card ────────────────────────────────────────
+function renderOppCard(r, rank) {
+  const sigCls = r.signal === 'ACHAT' ? 'signal-achat' :
+                 r.signal === 'SURVEILLER' ? 'signal-surveiller' : 'signal-neutre';
+  const scCls  = scoreClass(r.score);
+  const meta   = sectorMeta(r.sector);
+
+  const reasonsHtml = (r.reasons || []).slice(0, 3).map(re =>
+    `<div class="md-bullet" style="font-size:.8rem;margin-bottom:.2rem;">
+       <span class="reason-dot">▸</span><span class="text-secondary">${re}</span>
+     </div>`
+  ).join('');
+
+  const upside = r.upside_pct != null ? `<span class="text-success fw-semibold">+${r.upside_pct}%</span>` : '';
+
+  return `
+  <div class="col-12 col-md-6 col-xl-4">
+    <div class="opp-card ${sigCls} h-100 p-0">
+
+      <!-- Header -->
+      <div class="p-3 pb-2" style="border-bottom:1px solid rgba(255,255,255,.06);">
+        <div class="d-flex align-items-start justify-content-between gap-2 mb-1">
+          <div class="d-flex align-items-center gap-2">
+            ${rank <= 3 ? `<span style="font-size:1.1rem">${['🥇','🥈','🥉'][rank-1]}</span>` : `<span class="text-secondary fw-bold" style="font-size:.85rem;">#${rank}</span>`}
+            <span class="ticker-tag">${r.ticker}</span>
+            ${signalBadge(r.signal)}
+          </div>
+          <div class="text-end">
+            <div class="fw-bold" style="font-size:1.05rem;">${fmt(r.cours, 2)} <small class="text-secondary fw-normal" style="font-size:.75rem;">MAD</small></div>
+            <div style="font-size:.8rem;">${varHtml(r.variation)}</div>
+          </div>
+        </div>
+        <div class="text-secondary" style="font-size:.78rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+          <i class="bi ${meta.icon} me-1" style="color:${meta.color}"></i>${r.name || r.ticker} &nbsp;·&nbsp; ${r.sector}
+        </div>
+      </div>
+
+      <!-- Score -->
+      <div class="px-3 pt-2 pb-1">
+        <div class="d-flex justify-content-between align-items-center mb-1">
+          <small class="text-secondary" style="font-size:.72rem;">SCORE OPPORTUNITÉ</small>
+          <span class="fw-bold" style="font-size:.95rem;color:${r.score>=68?'#00e676':r.score>=48?'#ffd600':'#78909c'}">${r.score}/100</span>
+        </div>
+        <div class="score-track"><div class="score-fill ${scCls}" style="width:${r.score}%"></div></div>
+      </div>
+
+      <!-- Reasons -->
+      <div class="px-3 py-2">
+        ${reasonsHtml || '<div class="text-secondary" style="font-size:.78rem;">Données insuffisantes</div>'}
+      </div>
+
+      <!-- Entry / Target -->
+      <div class="px-3 pb-3">
+        <div class="price-entry">
+          <div class="row g-1 text-center">
+            <div class="col-6" style="border-right:1px solid rgba(255,255,255,.08);">
+              <div class="text-secondary" style="font-size:.68rem; text-transform:uppercase; letter-spacing:.05em;">Prix d'entrée</div>
+              <div class="fw-bold" style="color:#4fc3f7; font-size:1rem;">${fmt(r.entry, 1)} <small style="font-size:.7rem;opacity:.7;">MAD</small></div>
+            </div>
+            <div class="col-6">
+              <div class="text-secondary" style="font-size:.68rem; text-transform:uppercase; letter-spacing:.05em;">Objectif 6M</div>
+              <div class="fw-bold text-success" style="font-size:1rem;">${fmt(r.target, 1)} <small style="font-size:.7rem;opacity:.8;">${upside}</small></div>
+            </div>
+          </div>
+          ${r.div_yield > 0 ? `<div class="text-center mt-1" style="font-size:.72rem;color:#ffd600;"><i class="bi bi-coin me-1"></i>Dividende : ${fmt(r.div_yield,1)}%</div>` : ''}
+        </div>
+      </div>
+
+    </div>
+  </div>`;
+}
+
+// ─── Render sector block ──────────────────────────────────────────────────────
+function renderSectorBlock(sector, tickers) {
+  const meta  = sectorMeta(sector);
+  const best  = tickers[0];
+  const rows  = tickers.map((r, i) => `
+    <tr style="font-size:.82rem;">
+      <td><span class="ticker-tag" style="font-size:.72rem;padding:.1rem .4rem;">${r.ticker}</span></td>
+      <td class="text-center">${fmt(r.cours,1)}</td>
+      <td class="text-center">${varHtml(r.variation)}</td>
+      <td class="text-center">${signalBadge(r.signal)}</td>
+      <td class="text-center fw-bold" style="color:${r.score>=68?'#00e676':r.score>=48?'#ffd600':'#78909c'}">${r.score}</td>
+      <td class="text-center" style="color:#4fc3f7;">${fmt(r.entry,1)}</td>
+    </tr>`).join('');
+
+  return `
+  <div class="col-12 col-lg-6">
+    <div class="opp-card p-3 h-100">
+      <div class="sector-header">
+        <div class="sector-icon" style="background:${meta.color}22;color:${meta.color}">
+          <i class="bi ${meta.icon}"></i>
+        </div>
+        <div class="flex-grow-1">
+          <div class="fw-bold" style="font-size:.9rem;">${sector}</div>
+          <div class="text-secondary" style="font-size:.72rem;">${tickers.length} valeur${tickers.length>1?'s':''} analysée${tickers.length>1?'s':''}</div>
+        </div>
+        ${signalBadge(best.signal)}
+      </div>
+      <div class="table-responsive">
+        <table class="table table-dark table-sm mb-0" style="border-color:rgba(255,255,255,.07);">
+          <thead>
+            <tr style="font-size:.7rem;color:#8899aa;">
+              <th>Ticker</th><th class="text-center">Cours</th><th class="text-center">Var.</th>
+              <th class="text-center">Signal</th><th class="text-center">Score</th><th class="text-center">Entrée</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>
+  </div>`;
+}
+
+// ─── Stats row ────────────────────────────────────────────────────────────────
+function renderStats(data) {
+  const row = document.getElementById('statsRow');
+  row.innerHTML = `
+    <div class="stat-pill">
+      <div class="num text-success">${data.buy_count}</div>
+      <div class="lbl">ACHAT</div>
+    </div>
+    <div class="stat-pill">
+      <div class="num text-warning">${data.watch_count}</div>
+      <div class="lbl">SURVEILLER</div>
+    </div>
+    <div class="stat-pill">
+      <div class="num text-secondary">${data.neutral_count}</div>
+      <div class="lbl">NEUTRE</div>
+    </div>
+    <div class="stat-pill">
+      <div class="num text-info">${data.total}</div>
+      <div class="lbl">VALEURS</div>
+    </div>
+    <div class="stat-pill">
+      <div class="num text-white">${Object.keys(data.by_sector).length}</div>
+      <div class="lbl">SECTEURS</div>
+    </div>
+  `;
+  row.style.display = 'flex';
+}
+
+// ─── Main scan ────────────────────────────────────────────────────────────────
+async function runScan(force = false) {
+  document.getElementById('errorAlert').classList.add('d-none');
+  document.getElementById('results').style.display    = 'none';
+  document.getElementById('aiSection').style.display  = 'none';
+  document.getElementById('spinner').classList.add('active');
+  document.getElementById('spinnerMsg').textContent   = 'Scan sectoriel en cours…';
+
+  try {
+    const res  = await fetch('/api/scan-secteurs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+
+    _topPicks = data.top_picks || [];
+
+    // Stats
+    renderStats(data);
+
+    // Cache tag
+    const cacheTag = document.getElementById('cacheTag');
+    if (data.cached) {
+      const mins = Math.floor((data.cache_age || 0) / 60);
+      document.getElementById('cacheAge').textContent = `il y a ${mins} min`;
+      cacheTag.classList.remove('d-none');
+    } else {
+      cacheTag.classList.add('d-none');
+    }
+    document.getElementById('fetchedAt').textContent = data.fetched_at || '';
+
+    // Top picks grid
+    const grid = document.getElementById('topPicksGrid');
+    grid.innerHTML = (_topPicks || []).map((r, i) => renderOppCard(r, i + 1)).join('');
+
+    // Sector grid
+    const secGrid = document.getElementById('sectorGrid');
+    secGrid.innerHTML = Object.entries(data.by_sector || {})
+      .map(([sec, tickers]) => renderSectorBlock(sec, tickers))
+      .join('');
+
+    document.getElementById('results').style.display = 'block';
+    document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
+
+  } catch (err) {
+    document.getElementById('errorAlert').textContent = '❌ ' + (err.message || 'Erreur lors du scan.');
+    document.getElementById('errorAlert').classList.remove('d-none');
+  } finally {
+    document.getElementById('spinner').classList.remove('active');
+  }
+}
+
+// ─── AI Analysis ─────────────────────────────────────────────────────────────
+async function runAiAnalysis() {
+  if (!_topPicks.length) { alert('Lancez le scan d\'abord.'); return; }
+
+  document.getElementById('spinner').classList.add('active');
+  document.getElementById('spinnerMsg').textContent = 'Analyse IA en cours…';
+
+  try {
+    const res  = await fetch('/api/analyse-opportunites', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ top_picks: _topPicks.slice(0, 10) }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+
+    document.getElementById('aiContent').innerHTML = markdownToHtml(data.analysis);
+    document.getElementById('aiSection').style.display = 'block';
+    document.getElementById('aiBtn').style.display     = 'none';
+    document.getElementById('aiSection').scrollIntoView({ behavior: 'smooth' });
+  } catch (err) {
+    alert('Erreur analyse IA : ' + (err.message || 'inconnue'));
+  } finally {
+    document.getElementById('spinner').classList.remove('active');
+  }
+}
+
+// ─── Markdown renderer (same as index.html) ───────────────────────────────────
+function applyInline(text) {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/_(.+?)_/g,       '<em>$1</em>')
+    .replace(/🟢\s*HAUSSIER/g, '<span class="badge bg-success">🟢 HAUSSIER</span>')
+    .replace(/🟡\s*NEUTRE/g,   '<span class="badge bg-warning text-dark">🟡 NEUTRE</span>')
+    .replace(/🔴\s*BAISSIER/g, '<span class="badge bg-danger">🔴 BAISSIER</span>')
+    .replace(/ACHAT FORT/g,    '<span class="badge bg-success">⭐ ACHAT FORT</span>')
+    .replace(/\bACHAT\b/g,     '<span class="badge bg-success">✅ ACHAT</span>')
+    .replace(/\bVENTE\b/g,     '<span class="badge bg-danger">❌ VENTE</span>')
+    .replace(/\bNEUTRE\b/g,    '<span class="badge bg-warning text-dark">⚖️ NEUTRE</span>')
+    .replace(/\bCONSERVER\b/g, '<span class="badge bg-info text-dark">🔵 CONSERVER</span>')
+    .replace(/\bALLÉGER\b/g,   '<span class="badge bg-warning text-dark">🟡 ALLÉGER</span>')
+    .replace(/\bSURVEILLER\b/g,'<span class="badge bg-warning text-dark">👁 SURVEILLER</span>');
+}
+
+function renderMdTable(block) {
+  const lines = block.trim().split('\n').filter(l => l.trim());
+  if (lines.length < 2) return block;
+  const isSep = l => /^\|[\s\-:|]+\|/.test(l);
+  const parse = l => l.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+  let html = '<div class="table-responsive my-3"><table class="table table-dark table-bordered table-sm" style="font-size:.86rem;border-color:rgba(255,255,255,.12)">';
+  let first = true;
+  lines.forEach(l => {
+    if (isSep(l)) return;
+    const cells = parse(l);
+    if (first) {
+      html += '<thead><tr>' + cells.map(c => `<th class="text-center" style="background:rgba(0,132,61,.2);color:#4fc3f7">${applyInline(c)}</th>`).join('') + '</tr></thead><tbody>';
+      first = false;
+    } else {
+      html += '<tr>' + cells.map((c,i) => `<td class="${i===0?'fw-semibold':'text-center'}">${applyInline(c)}</td>`).join('') + '</tr>';
+    }
+  });
+  return html + '</tbody></table></div>';
+}
+
+function markdownToHtml(text) {
+  const lines = text.split('\n');
+  let html = '';
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^## /.test(line)) {
+      const title = line.replace(/^## /, '');
+      const nm = title.match(/^([^\s]+\s+\d+\.)/);
+      const np = nm ? `<span class="section-h2-num">${nm[1]}</span>` : '';
+      const rp = nm ? title.slice(nm[0].length) : title;
+      html += `<h5 class="fw-bold mt-4 mb-2 border-bottom pb-2" style="color:#4fc3f7">${np}${applyInline(rp)}</h5>`;
+      i++; continue;
+    }
+    if (/^### /.test(line)) {
+      html += `<h6 class="fw-semibold mt-3 mb-1 text-warning">${applyInline(line.replace(/^### /,''))}</h6>`;
+      i++; continue;
+    }
+    if (/^\|/.test(line)) {
+      let block = '';
+      while (i < lines.length && /^\|/.test(lines[i])) { block += lines[i] + '\n'; i++; }
+      html += renderMdTable(block); continue;
+    }
+    if (/^\s*\d+\.\s/.test(line)) {
+      const content = line.replace(/^\s*\d+\.\s/, '');
+      const num = (line.trim().match(/^(\d+)\./) || ['','•'])[1];
+      const indent = line.match(/^(\s+)/) ? 'ms-3' : '';
+      html += `<div class="md-num-item ${indent}"><span class="md-num-badge">${num}</span><span>${applyInline(content)}</span></div>`;
+      i++; continue;
+    }
+    if (/^\s*[-*]\s/.test(line)) {
+      const content = line.replace(/^\s*[-*]\s/, '');
+      const indent = line.match(/^(\s+)/) ? 'ms-3' : '';
+      html += `<div class="md-bullet ${indent}"><span class="md-bullet-dot">▸</span><span>${applyInline(content)}</span></div>`;
+      i++; continue;
+    }
+    if (/^\s*\*\*.+\*\*\s*:?\s*$/.test(line)) {
+      html += `<div class="fw-semibold mt-2 mb-1" style="color:#a0c8e8">${applyInline(line.trim())}</div>`;
+      i++; continue;
+    }
+    if (line.trim() === '') { html += '<div class="mb-1"></div>'; i++; continue; }
+    html += `<p class="mb-1">${applyInline(line)}</p>`;
+    i++;
+  }
+  return html;
+}
+</script>
+</body>
+</html>
