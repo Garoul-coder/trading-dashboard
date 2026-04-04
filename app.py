@@ -2,10 +2,10 @@ import os
 import json
 import time
 
-# Charge .env automatiquement en local (ignoré si python-dotenv absent)
+# Charge .env automatiquement en local (override=True : écrase les vars système vides)
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    load_dotenv(override=True)
 except ImportError:
     pass
 import threading
@@ -612,7 +612,7 @@ Structure OBLIGATOIRE (7 sections, utilise puces "- " et numérotation "1. 2. 3.
 |---|---|
 | **Prix cible 12M** | XXX MAD (+XX% potentiel) |
 | **Prix entrée actuel** | XXX MAD |
-| **Potentiel haussier** | +XX% \| Risque baissier : -XX% (XXX MAD) |
+| **Potentiel haussier** | +XX% — Risque baissier : -XX% (XXX MAD) |
 | **Profil risque** | Faible / Moyen / Élevé |
 
 **Arguments principaux :**
