@@ -179,7 +179,13 @@ def _drahmi_headers():
     key = os.environ.get("DRAHMI_API_KEY") or os.environ.get("trading_dashboard")
     if not key:
         raise ValueError("DRAHMI_API_KEY non configurée")
-    return {"X-API-Key": key}
+    return {
+        "X-API-Key": key,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Origin": "https://www.drahmi.app",
+        "Referer": "https://www.drahmi.app/",
+    }
 
 
 def fetch_drahmi_data(ticker):
@@ -373,7 +379,7 @@ Structure OBLIGATOIRE (7 sections) :
         model="claude-haiku-4-5",
         max_tokens=2000,
         messages=[{"role": "user", "content": prompt}],
-        timeout=12,
+        timeout=25,
     )
     return response.content[0].text
 
