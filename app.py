@@ -181,6 +181,7 @@ def _drahmi_headers():
         raise ValueError("DRAHMI_API_KEY non configurée")
     return {
         "X-API-Key": key,
+        "Authorization": f"Bearer {key}",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept": "application/json",
         "Origin": "https://www.drahmi.app",
@@ -334,6 +335,8 @@ def generate_analysis(ticker, sector, sd):
 """
 
     prompt = f"""Analyste financier BVC expert. Analyse complète en français, style broker, bullet points concis.
+
+RÈGLE ABSOLUE : N'invente JAMAIS un cours ou un prix. Si le cours n'est pas fourni dans les données ci-dessous, indique explicitement "cours non disponible" et ne cite aucun chiffre de prix.
 
 Ticker : **{ticker}** | Secteur : {sector}
 {company_section}
