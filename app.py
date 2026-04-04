@@ -792,143 +792,353 @@ SCAN_TICKERS = [
     "RIS",
 ]
 
-# Cache en mémoire (TTL 15 min)
+# Cache en mémoire (TTL 30 min — préserve le quota 100 req/jour Drahmi)
 _scan_cache: dict = {"data": None, "ts": 0.0}
-_SCAN_TTL = 900
+_SCAN_TTL = 1800
 
 
-def _fetch_one_ticker(ticker: str):
-    """Fetch un ticker pour le scan sectoriel (1 seul appel Drahmi)."""
-    try:
-        headers = _drahmi_headers()
-        r = http.get(f"{DRAHMI_BASE}/stocks/{ticker}", headers=headers, timeout=8)
-        if r.status_code == 200:
-            d = r.json()
-            cours = d.get("price")
-            if not cours:
-                return None
-            return {
-                "ticker":         ticker,
-                "sector":         SECTORS.get(ticker, "Divers"),
-                "name":           d.get("name") or ticker,
-                "cours":          float(cours),
-                "variation":      d.get("change") or 0.0,
-                "volume":         d.get("volume24h") or 0,
-                "capitalisation": d.get("marketCap") or 0,
-                "per":            d.get("peRatio"),
-                "div_yield":      d.get("dividendYield") or 0.0,
-                "week52_high":    d.get("week52High"),
-                "week52_low":     d.get("week52Low"),
-                "beta":           d.get("beta"),
-            }
-    except Exception as e:
-        print(f"[SCAN] {ticker}: {e}")
+# ── Indicateurs techniques ──────────────────────────────────────────────────
+
+def _parse_rsi_from_signals(signals: list) -> float | None:
+    """Extrait la valeur RSI numérique depuis les champs 'why'/'name' des signaux."""
+    import re
+    for s in signals:
+        for field in ("why", "name", "description", "detail"):
+            txt = str(s.get(field) or "")
+            m = re.search(r'rsi[^0-9]*?(\d{1,2}(?:\.\d+)?)', txt, re.IGNORECASE)
+            if m:
+                v = float(m.group(1))
+                if 5 < v < 95:
+                    return round(v, 1)
+        # Numerical value field
+        if s.get("indicator") in ("RSI", "rsi"):
+            v = s.get("value") or s.get("current_value")
+            if v and 5 < float(v) < 95:
+                return round(float(v), 1)
     return None
 
 
-def compute_opportunity_score(sd: dict):
+def _parse_ma_signal(signals: list) -> str:
+    """Retourne 'bullish' | 'bearish' | 'neutral' selon les signaux MA."""
+    for s in signals:
+        if not s.get("triggered"):
+            continue
+        name = str(s.get("name") or "").lower()
+        why  = str(s.get("why")  or "").lower()
+        is_ma = any(k in name + why for k in ("mm", "ma", "moy", "average", "cross"))
+        if is_ma:
+            is_bull = any(k in why for k in ("haussier", "bullish", "dessus", "above", "↗", "hausse"))
+            is_bear = any(k in why for k in ("baissier", "bearish", "dessous", "below", "↘", "baisse"))
+            if is_bull:
+                return "bullish"
+            if is_bear:
+                return "bearish"
+    return "neutral"
+
+
+def _approx_rsi(pos_in_range: float, var: float) -> float:
+    """RSI approché depuis la position 52S + variation séance (fallback)."""
+    base = 30 + pos_in_range * 40          # 30–70
+    base += min(8, max(-8, var * 2))        # momentum ajustement
+    return round(max(15, min(85, base)), 1)
+
+
+def _rsi_label(rsi: float) -> str:
+    if rsi < 30:  return "Survente"
+    if rsi < 40:  return "Bas"
+    if rsi <= 60: return "Neutre"
+    if rsi <= 70: return "Haut"
+    return "Surachat"
+
+
+# ── Fetch complet ticker (2 appels : prix + signaux) ─────────────────────────
+
+_quota_exceeded = False   # flag global : stoppe le scan si 429 détecté
+
+
+def _fetch_ticker_full(ticker: str) -> dict | None:
+    """Fetch données de marché + signaux techniques pour le scan avancé."""
+    global _quota_exceeded
+    if _quota_exceeded:
+        return None
+
+    headers = _drahmi_headers()
+    result: dict = {
+        "ticker":  ticker,
+        "sector":  SECTORS.get(ticker, "Divers"),
+        "signals": [],
+    }
+
+    # ── Appel 1 : prix / fondamentaux ─────────────────────────────────────
+    try:
+        r = http.get(f"{DRAHMI_BASE}/stocks/{ticker}", headers=headers, timeout=8)
+        if r.status_code == 429:
+            _quota_exceeded = True
+            print(f"[SCAN] 429 quota épuisé sur {ticker}")
+            return None
+        if r.status_code != 200:
+            return None
+        d = r.json()
+        cours = d.get("price")
+        if not cours:
+            return None
+        result.update({
+            "name":          d.get("name") or ticker,
+            "cours":         float(cours),
+            "variation":     float(d.get("change") or 0),
+            "volume":        d.get("volume24h") or 0,
+            "capitalisation":d.get("marketCap") or 0,
+            "per":           d.get("peRatio"),
+            "div_yield":     float(d.get("dividendYield") or 0),
+            "week52_high":   d.get("week52High"),
+            "week52_low":    d.get("week52Low"),
+            "beta":          d.get("beta"),
+        })
+    except Exception as e:
+        print(f"[SCAN] {ticker} prix: {e}")
+        return None
+
+    # ── Appel 2 : signaux techniques ──────────────────────────────────────
+    try:
+        r2 = http.get(
+            f"{DRAHMI_BASE}/intelligence/stocks/{ticker}/signals",
+            headers=headers, params={"range": "3M"}, timeout=8
+        )
+        if r2.status_code == 200:
+            result["signals"] = r2.json().get("data", {}).get("signals", [])
+    except Exception as e:
+        print(f"[SCAN] {ticker} signals: {e}")
+
+    return result
+
+
+# ── Scoring opportunité v2 ────────────────────────────────────────────────────
+
+def compute_opportunity_score(sd: dict, sector_sentiment: float = 0) -> tuple:
     """
-    Score 0-100 combinant :
-      - Position dans range 52S (proximité du support)  → 40 pts max
-      - Momentum séance                                  → 20 pts max
-      - Rendement dividende                              → 20 pts max
-      - Valorisation PER                                 → 10 pts max
-      - Potentiel retour vers 52S haut                   → 10 pts max
-    Retourne (score: int, reasons: list[str])
+    Score 0–100 multi-critères weekly :
+      Position 52S / support    → 25 pts
+      RSI (extrait ou approché) → 20 pts
+      Signaux MA / momentum     → 20 pts
+      Momentum séance           → 15 pts
+      Dividende + PER           → 10 pts
+      Sentiment sectoriel       → 10 pts
+    Retourne (score, reasons, rsi_value, ma_signal_str)
     """
     score   = 0
     reasons = []
-    cours   = sd.get("cours", 0)
+    cours   = float(sd.get("cours") or 0)
     high52  = sd.get("week52_high")
     low52   = sd.get("week52_low")
     var     = float(sd.get("variation") or 0)
     dy      = float(sd.get("div_yield") or 0)
     per     = sd.get("per")
+    signals = sd.get("signals", [])
 
-    # ── Position 52S ────────────────────────────────────────────────────────
-    if high52 and low52 and high52 > low52:
-        rng    = high52 - low52
-        pos    = (cours - low52) / rng          # 0 = bas annuel, 1 = haut annuel
-        upside = (high52 - cours) / cours * 100
+    # Position dans le range 52 semaines
+    pos_52 = 0.5
+    if high52 and low52 and float(high52) > float(low52):
+        rng   = float(high52) - float(low52)
+        pos_52 = (cours - float(low52)) / rng
+        upside = (float(high52) - cours) / cours * 100
 
-        if pos <= 0.15:
+        if pos_52 <= 0.18:
+            score += 20
+            reasons.append(f"Au support annuel ({float(low52):,.0f} MAD) ✓")
+        elif pos_52 <= 0.35:
             score += 25
-            reasons.append(f"Très proche du support annuel ({low52:,.0f} MAD)")
-        elif pos <= 0.35:
-            score += 40
-            reasons.append(f"Zone d'achat historique — bas 52S : {low52:,.0f} MAD")
-        elif pos <= 0.55:
-            score += 22
+            reasons.append(f"Zone d'achat — proche bas 52S ({float(low52):,.0f} MAD)")
+        elif pos_52 <= 0.52:
+            score += 15
             reasons.append("Cours sous la médiane annuelle")
-        elif pos <= 0.70:
-            score += 12
+        elif pos_52 <= 0.70:
+            score += 7
         else:
-            score += 4
+            score += 2
 
-        if upside >= 40:
-            score += 10
-            reasons.append(f"Potentiel de +{upside:.0f}% vers résistance 52S")
-        elif upside >= 20:
-            score += 5
-            reasons.append(f"Rebond possible : +{upside:.0f}% vers 52S haut")
+        if upside >= 35:
+            reasons.append(f"Potentiel +{upside:.0f}% vers résistance 52S")
+        elif upside >= 18:
+            reasons.append(f"Rebond possible +{upside:.0f}% vers 52S haut")
 
-    # ── Momentum séance ─────────────────────────────────────────────────────
-    if -1.5 <= var < 0:
-        score += 18
-        reasons.append(f"Légère correction ({var:+.1f}%) = point d'entrée favorable")
-    elif 0 <= var <= 2.0:
-        score += 20
-        reasons.append(f"Momentum positif ({var:+.1f}%)")
-    elif 2.0 < var <= 5.0:
-        score += 12
-    elif var < -3.0:
-        score += 2
+    # RSI
+    rsi = _parse_rsi_from_signals(signals) or _approx_rsi(pos_52, var)
+    ma_sig = _parse_ma_signal(signals)
+
+    if 40 <= rsi <= 60:
+        if var > 0:
+            score += 20
+            reasons.append(f"RSI {rsi:.0f} neutre↗ — configuration d'entrée idéale")
+        else:
+            score += 13
+            reasons.append(f"RSI {rsi:.0f} — zone neutre opportuniste")
+    elif 30 <= rsi < 40:
+        score += 16
+        reasons.append(f"RSI {rsi:.0f} — approche survente, rebond probable")
+    elif rsi < 30:
+        score += 9
+        reasons.append(f"RSI {rsi:.0f} — survente (attendre confirmation)")
+    elif 60 < rsi <= 70:
+        score += 7
     else:
-        score += 7
+        score += 1   # >70 overbought
 
-    # ── Rendement dividende ─────────────────────────────────────────────────
-    if dy >= 6.0:
+    # Signaux MA + déclenchés
+    triggered = [s for s in signals if s.get("triggered")]
+    if ma_sig == "bullish":
         score += 20
-        reasons.append(f"Rendement dividende exceptionnel : {dy:.1f}%")
-    elif dy >= 4.0:
-        score += 14
-        reasons.append(f"Fort rendement dividende : {dy:.1f}%")
-    elif dy >= 2.0:
-        score += 7
-        reasons.append(f"Dividende : {dy:.1f}%")
+        reasons.append("Croisement MA haussier déclenché ✓")
+    elif len(triggered) >= 2:
+        score += 15
+        reasons.append(f"{len(triggered)} signaux techniques actifs")
+    elif len(triggered) == 1:
+        score += 8
+        reasons.append(f"Signal actif : {triggered[0].get('name','')}")
 
-    # ── PER ──────────────────────────────────────────────────────────────────
-    if per and 5 < float(per) < 15:
-        score += 10
-        reasons.append(f"PER attractif : {float(per):.1f}x")
-    elif per and 15 <= float(per) <= 22:
+    # Momentum séance
+    if -1.5 <= var < 0:
+        score += 14
+        reasons.append(f"Légère correction ({var:+.1f}%) = point d'entrée")
+    elif 0 <= var <= 2.5:
+        score += 15
+        reasons.append(f"Momentum positif ({var:+.1f}%)")
+    elif 2.5 < var <= 5:
+        score += 8
+    elif var < -3:
+        score += 1
+    else:
         score += 5
 
-    return min(score, 100), reasons
+    # Dividende
+    if dy >= 6:
+        score += 7
+        reasons.append(f"Dividende exceptionnel : {dy:.1f}%")
+    elif dy >= 4:
+        score += 5
+        reasons.append(f"Dividende attractif : {dy:.1f}%")
+    elif dy >= 2:
+        score += 2
+
+    # PER
+    if per:
+        p = float(per)
+        if 5 < p < 15:
+            score += 3
+            reasons.append(f"PER attractif : {p:.1f}x")
+
+    # Sentiment sectoriel
+    if sector_sentiment >= 30:
+        score += 10
+        reasons.append(f"Secteur 🔥 haussier (sentiment {sector_sentiment:+.0f})")
+    elif sector_sentiment >= 5:
+        score += 5
+    elif sector_sentiment < -20:
+        score -= 5
+
+    return min(score, 100), reasons, round(rsi, 1), ma_sig
 
 
-def _compute_entry_and_target(sd: dict, score: int):
-    """Prix d'entrée et objectif calculés depuis la position technique."""
-    cours = sd.get("cours", 0)
-    high52 = sd.get("week52_high") or cours * 1.20
-    low52  = sd.get("week52_low")  or cours * 0.80
+# ── Sentiment sectoriel −100 → +100 ──────────────────────────────────────────
 
-    # Entrée : d'autant plus proche du cours que le score est élevé
-    if score >= 70:
-        entry = round(cours * 0.985, 1)
-    elif score >= 55:
-        entry = round(cours * 0.970, 1)
-    elif score >= 40:
-        entry = round(cours * 0.950, 1)
+def compute_sector_sentiment(stocks: list) -> dict:
+    """
+    Score de sentiment sectoriel de −100 à +100.
+    Basé sur : momentum moyen, RSI moyen, signaux MA, position 52S.
+    """
+    if not stocks:
+        return {"score": 0, "label": "⚖️ Neutre", "color": "#ffd600", "perf_avg": 0}
+
+    mom_scores, rsi_vals, pos_vals = [], [], []
+    bull_cross = 0
+
+    for sd in stocks:
+        var   = float(sd.get("variation") or 0)
+        sigs  = sd.get("signals", [])
+        cours = float(sd.get("cours") or 0)
+        h52   = sd.get("week52_high")
+        l52   = sd.get("week52_low")
+
+        # Momentum contribution (−40 → +40)
+        if var > 3:    mom_scores.append(40)
+        elif var > 1:  mom_scores.append(20)
+        elif var > 0:  mom_scores.append(10)
+        elif var > -1: mom_scores.append(-5)
+        elif var > -3: mom_scores.append(-20)
+        else:          mom_scores.append(-40)
+
+        # RSI
+        pos_52 = 0.5
+        if h52 and l52 and float(h52) > float(l52):
+            pos_52 = (cours - float(l52)) / (float(h52) - float(l52))
+            pos_vals.append(pos_52)
+        rsi = _parse_rsi_from_signals(sigs) or _approx_rsi(pos_52, var)
+        rsi_vals.append(rsi)
+
+        # MA
+        if _parse_ma_signal(sigs) == "bullish":
+            bull_cross += 1
+
+    n = len(stocks)
+    sentiment = 0.0
+
+    # Momentum (poids 45 %)
+    if mom_scores:
+        sentiment += (sum(mom_scores) / len(mom_scores)) * 0.45
+
+    # RSI vs 50 (poids 30 %) : RSI 50 = neutre, écart amplifié ×0.8
+    if rsi_vals:
+        rsi_mean = sum(rsi_vals) / len(rsi_vals)
+        sentiment += (rsi_mean - 50) * 0.8
+
+    # MA croisements (poids 25 %)
+    if n:
+        sentiment += (bull_cross / n - 0.5) * 50
+
+    # Position 52S (bonus/malus léger)
+    if pos_vals:
+        pos_mean = sum(pos_vals) / len(pos_vals)
+        sentiment += (pos_mean - 0.5) * 10
+
+    sentiment = round(max(-100, min(100, sentiment)), 1)
+    perf_avg  = round(sum(float(s.get("variation") or 0) for s in stocks) / n, 2)
+
+    if sentiment >= 25:
+        label, color = "🔥 Haussier", "#00e676"
+    elif sentiment >= -10:
+        label, color = "⚖️ Neutre",  "#ffd600"
     else:
-        entry = round(max(cours * 0.90, low52 * 1.03), 1)
+        label, color = "❄️ Baissier", "#ef5350"
 
-    # Objectif : 60 % du chemin vers le 52S haut (conservateur)
+    return {
+        "score":    sentiment,
+        "label":    label,
+        "color":    color,
+        "perf_avg": perf_avg,
+        "rsi_avg":  round(sum(rsi_vals) / len(rsi_vals), 1) if rsi_vals else None,
+        "bull_pct": round(bull_cross / n * 100, 0) if n else 0,
+        "n":        n,
+    }
+
+
+def _compute_entry_and_target(sd: dict, score: int) -> tuple:
+    """Prix d'entrée + objectif 6M + % upside."""
+    cours  = float(sd.get("cours") or 0)
+    high52 = float(sd.get("week52_high") or cours * 1.20)
+    low52  = float(sd.get("week52_low")  or cours * 0.80)
+
+    if score >= 72:
+        entry = round(cours * 0.987, 1)
+    elif score >= 58:
+        entry = round(cours * 0.972, 1)
+    elif score >= 44:
+        entry = round(cours * 0.952, 1)
+    else:
+        entry = round(max(cours * 0.90, low52 * 1.04), 1)
+
     gap    = high52 - entry
     target = round(entry + gap * 0.60, 1)
-
-    upside_pct = round((target - entry) / entry * 100, 1) if entry else 0
-    return entry, target, upside_pct
+    upside = round((target - entry) / entry * 100, 1) if entry else 0
+    return entry, target, upside
 
 
 @app.route("/opportunites")
@@ -941,62 +1151,100 @@ def scan_secteurs():
     global _scan_cache
     force = (request.get_json(silent=True) or {}).get("force", False)
 
-    # Retour cache si récent
-    if (not force
-            and _scan_cache["data"]
+    # ── Cache ────────────────────────────────────────────────────────────────
+    if (not force and _scan_cache["data"]
             and time.time() - _scan_cache["ts"] < _SCAN_TTL):
         resp = dict(_scan_cache["data"])
         resp["cached"]    = True
         resp["cache_age"] = int(time.time() - _scan_cache["ts"])
         return jsonify(resp)
 
-    # ── Scan parallèle (max 22 s pour laisser la marge avant timeout 30 s) ──
+    global _quota_exceeded
+    _quota_exceeded = False   # reset au début de chaque scan forcé
+    t0 = time.time()
+
+    # ── Phase 1 : fetch parallèle (prix + signaux) pour tous les tickers ────
     raw: list[dict] = []
     with ThreadPoolExecutor(max_workers=10) as ex:
-        futures = {ex.submit(_fetch_one_ticker, t): t for t in SCAN_TICKERS}
+        futures = {ex.submit(_fetch_ticker_full, t): t for t in SCAN_TICKERS}
         try:
-            for f in as_completed(futures, timeout=22):
+            for f in as_completed(futures, timeout=24):
                 r = f.result()
                 if r and r.get("cours"):
-                    score, reasons = compute_opportunity_score(r)
-                    entry, target, upside_pct = _compute_entry_and_target(r, score)
-                    r.update({
-                        "score":      score,
-                        "reasons":    reasons,
-                        "entry":      entry,
-                        "target":     target,
-                        "upside_pct": upside_pct,
-                        "signal":     ("ACHAT"      if score >= 68
-                                       else "SURVEILLER" if score >= 48
-                                       else "NEUTRE"),
-                    })
                     raw.append(r)
         except Exception as e:
-            print(f"[SCAN] ThreadPool timeout/error: {e}")
+            print(f"[SCAN] fetch timeout: {e}")
 
     if not raw:
-        return jsonify({"error": "Aucune donnée Drahmi disponible"}), 503
+        msg = ("Quota API Drahmi épuisé (100 req/jour). "
+               "Réessayez demain ou utilisez les données en cache.")  \
+              if _quota_exceeded else "Aucune donnée Drahmi disponible"
+        return jsonify({"error": msg, "quota_exceeded": _quota_exceeded}), 503
+
+    print(f"[SCAN] {len(raw)} tickers en {time.time()-t0:.1f}s")
+
+    # ── Phase 2 : sentiment sectoriel (agrège par secteur d'abord) ──────────
+    sectors_stocks: dict[str, list] = {}
+    for r in raw:
+        sectors_stocks.setdefault(r["sector"], []).append(r)
+
+    sector_sentiments: dict[str, dict] = {
+        sec: compute_sector_sentiment(stocks)
+        for sec, stocks in sectors_stocks.items()
+    }
+
+    # ── Phase 3 : scoring final avec sentiment sectoriel ────────────────────
+    for r in raw:
+        sec_sent = sector_sentiments.get(r["sector"], {}).get("score", 0)
+        score, reasons, rsi, ma_sig = compute_opportunity_score(r, sec_sent)
+        entry, target, upside = _compute_entry_and_target(r, score)
+        r.update({
+            "score":      score,
+            "reasons":    reasons,
+            "rsi":        rsi,
+            "rsi_label":  _rsi_label(rsi),
+            "ma_signal":  ma_sig,
+            "entry":      entry,
+            "target":     target,
+            "upside_pct": upside,
+            "signal":     ("ACHAT"      if score >= 68
+                           else "SURVEILLER" if score >= 48
+                           else "NEUTRE"),
+        })
 
     raw.sort(key=lambda x: x["score"], reverse=True)
 
-    # Grouper par secteur (trié par meilleur score)
-    sectors_map: dict = {}
+    # ── Grouper secteurs triés par sentiment décroissant ────────────────────
+    by_sector: dict = {}
     for r in raw:
-        sectors_map.setdefault(r["sector"], []).append(r)
-    # Trier les secteurs par score max de leur meilleure valeur
-    sectors_sorted = dict(
-        sorted(sectors_map.items(), key=lambda kv: kv[1][0]["score"], reverse=True)
-    )
+        by_sector.setdefault(r["sector"], []).append(r)
+
+    by_sector_full = {}
+    for sec in sorted(by_sector, key=lambda s: sector_sentiments.get(s, {}).get("score", 0), reverse=True):
+        by_sector_full[sec] = {
+            "stocks":    by_sector[sec],
+            "sentiment": sector_sentiments[sec],
+        }
+
+    # Top 3 secteurs par sentiment
+    top3_sectors = [
+        {"sector": sec, **data}
+        for sec, data in list(by_sector_full.items())[:3]
+    ]
 
     payload = {
-        "cached":      False,
-        "fetched_at":  datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
-        "total":       len(raw),
-        "top_picks":   raw[:12],
-        "by_sector":   sectors_sorted,
-        "buy_count":   sum(1 for r in raw if r["signal"] == "ACHAT"),
-        "watch_count": sum(1 for r in raw if r["signal"] == "SURVEILLER"),
+        "cached":        False,
+        "fetched_at":    datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+        "scan_duration": round(time.time() - t0, 1),
+        "total":         len(raw),
+        "top_picks":     raw[:12],
+        "by_sector":     by_sector_full,
+        "top3_sectors":  top3_sectors,
+        "buy_count":     sum(1 for r in raw if r["signal"] == "ACHAT"),
+        "watch_count":   sum(1 for r in raw if r["signal"] == "SURVEILLER"),
         "neutral_count": sum(1 for r in raw if r["signal"] == "NEUTRE"),
+        "api_calls":     len(raw) * 2,
+        "quota_warning": _quota_exceeded,
     }
     _scan_cache["data"] = payload
     _scan_cache["ts"]   = time.time()
@@ -1005,59 +1253,76 @@ def scan_secteurs():
 
 @app.route("/api/analyse-opportunites", methods=["POST"])
 def analyse_opportunites():
-    """Analyse IA (Claude) des top picks issus du scan sectoriel."""
+    """Analyse IA narrative des opportunités sectorielles."""
     body      = request.get_json(force=True, silent=True) or {}
     top_picks = body.get("top_picks", [])
+    top3_sec  = body.get("top3_sectors", [])
     if not top_picks:
         return jsonify({"error": "Aucun pick fourni"}), 400
 
-    # Construire le contexte compact
-    lines = []
+    # Contexte tickers
+    ticker_lines = []
     for r in top_picks[:10]:
-        h = r.get("week52_high") or "?"
-        l = r.get("week52_low")  or "?"
-        lines.append(
+        h = r.get("week52_high") or "—"
+        l = r.get("week52_low")  or "—"
+        ticker_lines.append(
             f"- **{r['ticker']}** ({r['sector']}) : {r['cours']:,.1f} MAD "
-            f"({r.get('variation', 0):+.1f}%) | score={r['score']}/100 | "
-            f"entrée={r['entry']:,.1f} | objectif={r['target']:,.1f} (+{r['upside_pct']}%) | "
-            f"div={r.get('div_yield', 0):.1f}% | PER={r.get('per') or '—'} | "
-            f"52S [{l}–{h}] | "
-            f"{'; '.join(r.get('reasons', [])[:2])}"
+            f"({r.get('variation', 0):+.1f}%) | Score={r['score']}/100 | "
+            f"RSI={r.get('rsi','—')} ({r.get('rsi_label','')}) | "
+            f"MA={r.get('ma_signal','neutral')} | "
+            f"Entrée={r.get('entry','—')} MAD | Objectif={r.get('target','—')} MAD (+{r.get('upside_pct','—')}%) | "
+            f"Div={r.get('div_yield', 0):.1f}% | PER={r.get('per') or '—'} | "
+            f"52S [{l}–{h}] | [{'; '.join(r.get('reasons', [])[:2])}]"
         )
-    ctx = "\n".join(lines)
 
-    prompt = f"""Analyste financier BVC expert. Tu reçois le scan des meilleures opportunités \
-boursières hors secteur bancaire, classées par score :
+    # Contexte secteurs
+    sec_lines = []
+    for s in top3_sec[:5]:
+        sent = s.get("sentiment", {})
+        stocks = s.get("stocks", [])
+        top_v = stocks[0].get("ticker") if stocks else "—"
+        sec_lines.append(
+            f"- **{s['sector']}** : sentiment={sent.get('score',0):+.0f} ({sent.get('label','')}) | "
+            f"perf_moy={sent.get('perf_avg',0):+.1f}% | RSI_moy={sent.get('rsi_avg','—')} | "
+            f"MA_haussier={sent.get('bull_pct',0):.0f}% valeurs | top_valeur={top_v}"
+        )
+
+    ctx = "**Top Opportunités :**\n" + "\n".join(ticker_lines)
+    if sec_lines:
+        ctx += "\n\n**Secteurs leaders :**\n" + "\n".join(sec_lines)
+
+    prompt = f"""Tu es analyste financier senior spécialisé BVC (Bourse de Casablanca).
+Analyse basée sur un scan sectoriel HEBDOMADAIRE (hors banques) :
 
 {ctx}
 
-Produis une analyse concise en français (style flash note broker) :
+Rédige en français, style flash note broker, avec puces et numérotation :
 
 ## 🎯 1. Top 3 Opportunités Prioritaires
+Pour chacune :
+1. **[TICKER]** — [Secteur] | RSI [X] | Signal MA : [haussier/neutre/baissier]
+   - Thèse : (configuration technique + contexte fondamental en 2 lignes)
+   - Entrée : [X MAD] | Objectif 6M : [Y MAD] (+Z%) | Stop-loss : [W MAD]
+   - Catalyseur BVC à surveiller
 
-Pour chacune, structure ainsi :
-1. **[TICKER]** — [Secteur]
-   - Thèse d'investissement (2 phrases max)
-   - Prix d'entrée : X MAD | Objectif 6M : Y MAD (+Z%) | Stop-loss : W MAD
-   - Catalyseur principal à surveiller
+## 📊 2. Sentiment Sectoriel (weekly)
+| Secteur | Tendance | RSI moy. | Top valeur | Commentaire |
+|---|---|---|---|---|
+(5 secteurs, couleur via emoji 🔥⚖️❄️)
 
-## 📊 2. Sentiment Sectoriel
-
-| Secteur | Signal | Meilleure valeur | Commentaire court |
-|---|---|---|---|
-(inclure les 5 secteurs les plus attractifs)
-
-## ⚠️ 3. Risques Principaux
-1. Risque macro/marché global
-2. Risque sectoriel spécifique
+## ⚠️ 3. Risques du moment
+1. [risque macro/BVC global]
+2. [risque sectoriel/idiosyncratique]
 
 ## 🧠 4. Stratégie d'Allocation
-3-4 lignes — répartition suggérée entre secteurs, timing et conditions d'entrée."""
+- Répartition suggérée inter-secteurs (%)
+- Timing d'entrée et conditions (weekly close > support, RSI > 40…)
+- Diversification et gestion du risque"""
 
     client = get_client()
     response = client.messages.create(
         model="claude-haiku-4-5",
-        max_tokens=1600,
+        max_tokens=1800,
         messages=[{"role": "user", "content": prompt}],
         timeout=25,
     )
