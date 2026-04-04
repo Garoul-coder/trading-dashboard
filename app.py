@@ -1,87 +1,12 @@
 import os
-import re
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+import requests as http
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify
 import anthropic
 
-from bvcscrap.tech import getCours, getKeyIndicators
-_BVCSCRAP_OK = True
-
 app = Flask(__name__)
 
-# ---------------------------------------------------------------------------
-# Mapping ticker BVC → nom BVCscrap (notation exacte requise)
-# Source : bvc.notation()  — 74 valeurs supportées
-# ---------------------------------------------------------------------------
-BVC_NAMES = {
-    # Banques
-    "ATW":    "Attijariwafa",
-    "BCP":    "BCP",
-    "CIH":    "CIH",
-    "BOA":    "BOA",
-    "CDM":    "CDM",
-    "BMCI":   "BMCI",
-    # Assurances & Financières
-    "WAA":    "Wafa Assur",
-    "ACM":    "ATLANTASANAD",
-    "SLF":    "SALAFIN",
-    "AFMA":   "AFMA",
-    "EQD":    "EQDOM",
-    "MAL":    "Maroc Leasing",
-    # Télécoms & Tech
-    "IAM":    "Maroc Telecom",
-    "M2M":    "M2M Group",
-    "HPS":    "HPS",
-    "DISWAY": "DISWAY",
-    "DISTY":  "Disty Technolog",
-    # Mines
-    "SMI":    "SMI",
-    "MNG":    "Managem",
-    "CMT":    "CMT",
-    # Ciment & BTP
-    "CMR":    "Ciments Maroc",
-    "LHM":    "LafargeHolcim",
-    "JET":    "Jet Contractors",
-    "TGCC":   "TGCC",
-    # Énergie
-    "TMA":    "TAQA Morocco",
-    "GAZ":    "Afriquia Gaz",
-    "TQM":    "Total Maroc",
-    "MOX":    "Maghreb Oxygene",
-    # Agroalimentaire
-    "SBM":    "Ste Boissons",
-    "OUL":    "Oulmes",
-    "LES":    "Lesieur Cristal",
-    "CSR":    "COSUMAR",
-    "MUT":    "Mutandis",
-    "UNM":    "Unimer",
-    "COL":    "Colorado",
-    # Distribution
-    "LBV":    "LABEL VIE",
-    # Automobile
-    "ADH":    "Auto Hall",
-    # Immobilier
-    "ALM":    "Alliances",
-    "DHO":    "Addoha",
-    "RDS":    "Res.Dar Saada",
-    "IMM":    "Immr Invest",
-    "ARA":    "Aradei Capital",
-    # Industrie & Chimie
-    "SID":    "Sonasid",
-    "PRO":    "PROMOPHARM",
-    "SNEP":   "SNEP",
-    "SOT":    "SOTHEMA",
-    "STK":    "Stokvis Nord Afr",
-    "AKD":    "Akdital",
-    "DEL":    "Delta Holding",
-    # Transport & Services
-    "CTM":    "CTM",
-    "RIS":    "Risma",
-    "MSA":    "SODEP",
-    # Autres
-    "S2M":    "S2M",
-}
+DRAHMI_BASE = "https://api.drahmi.app/api/v1"
 
 # ---------------------------------------------------------------------------
 # Secteurs BVC
@@ -248,84 +173,72 @@ def get_company_context(ticker):
 
 
 # ---------------------------------------------------------------------------
-# Parsing des valeurs retournées par BVCscrap (format français variable)
+# Fetch données via API Drahmi
 # ---------------------------------------------------------------------------
-def _bvc_num(s):
+def _drahmi_headers():
+    key = os.environ.get("DRAHMI_API_KEY")
+    if not key:
+        raise ValueError("DRAHMI_API_KEY non configurée")
+    return {"X-API-Key": key}
+
+
+def fetch_drahmi_data(ticker):
     """
-    Parse une valeur retournée par BVCscrap.
-    Gère : float/int natif, "6 734,00", "6.734,00", "+2,35%", "N/A", None.
+    2 appels API Drahmi en parallèle :
+      1. /stocks/{ticker}         — cours, variation, PER, beta, volume, capitalisation
+      2. /intelligence/stocks/{ticker}/signals — signaux RSI / MA crossover
+    Budget : 2 requêtes par analyse (~50 analyses/jour sur plan gratuit).
     """
-    if s is None:
-        return None
-    if isinstance(s, (int, float)):
-        return float(s)
-    s = str(s).strip()
-    if s in ("", "N/A", "—", "-", "n/a"):
-        return None
-    # Supprimer unités et espaces spéciaux
-    s = s.replace("\xa0", "").replace("\u202f", "").replace(" ", "")
-    s = re.sub(r"[MADmad%]", "", s)
-    # Format français : point = séparateur milliers, virgule = décimale
-    s = s.replace(".", "").replace(",", ".")
-    s = re.sub(r"[^\d.\-]", "", s)
+    headers = _drahmi_headers()
+    result = {
+        "source": "drahmi",
+        "ticker": ticker,
+        "fetched_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+    }
+
+    # ── Appel 1 : données de marché ──────────────────────────────────────────
     try:
-        return float(s) if s not in ("", ".") else None
-    except ValueError:
-        return None
+        r = http.get(f"{DRAHMI_BASE}/stocks/{ticker}", headers=headers, timeout=8)
+        if r.status_code == 200:
+            d = r.json()
+            result["name"]          = d.get("name")
+            result["cours"]         = d.get("price")
+            result["variation"]     = d.get("change")
+            result["volume"]        = d.get("volume24h")
+            result["capitalisation"]= d.get("marketCap")
+            result["per"]           = d.get("peRatio")
+            result["beta"]          = d.get("beta")
+            result["div_yield"]     = d.get("dividendYield")
+            result["week52_high"]   = d.get("week52High")
+            result["week52_low"]    = d.get("week52Low")
+            result["isin"]          = d.get("isin")
+            result["sector_drahmi"] = d.get("sector")
+            print(f"[DRAHMI] {ticker} → {result['cours']} MAD ({result['variation']:+.2f}%)")
+        elif r.status_code == 404:
+            result["error"] = "Ticker non trouvé dans Drahmi"
+            print(f"[DRAHMI] {ticker} → 404 not found")
+        else:
+            result["error"] = f"HTTP {r.status_code}"
+            print(f"[DRAHMI] {ticker} → HTTP {r.status_code}")
+    except Exception as e:
+        result["error"] = str(e)
+        print(f"[DRAHMI] {ticker} stocks ERROR: {e}")
 
-
-# ---------------------------------------------------------------------------
-# Fetch données BVC via BVCscrap
-# ---------------------------------------------------------------------------
-def fetch_bvc_data(name):
-    """
-    Appelle getCours() + getKeyIndicators() en PARALLÈLE avec timeout strict.
-    Budget : 12s max pour les deux appels BVCscrap combinés.
-    """
-    if not _BVCSCRAP_OK:
-        raise RuntimeError("BVCscrap non installé")
-
-    result = {"source": "bvcscrap", "name": name,
-               "scraped_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")}
-
-    # ── Exécution parallèle avec timeout ─────────────────────────────────────
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        fut_cours = pool.submit(getCours, name)
-        fut_ind   = pool.submit(getKeyIndicators, name)
-
-        # getCours — timeout 11s
-        try:
-            raw    = fut_cours.result(timeout=11)
-            seance = raw.get("Données_Seance", {})
-            result["cours"]          = _bvc_num(seance.get("Cours"))
-            result["variation"]      = _bvc_num(seance.get("Variation"))
-            result["ouverture"]      = _bvc_num(seance.get("Ouverture"))
-            result["haut"]           = _bvc_num(seance.get("Plus haut"))
-            result["bas"]            = _bvc_num(seance.get("Plus bas"))
-            result["clot_precedent"] = _bvc_num(seance.get("Cours de cloture veille"))
-            result["volume"]         = _bvc_num(seance.get("Volume en titres"))
-            result["capitalisation"] = _bvc_num(seance.get("Capitalisation"))
-            sp = raw.get("Seance_prec", {})
-            if sp:
-                result["seance_prec"] = sp
-            print(f"[BVC] getCours({name}) → cours={result.get('cours')}, vol={result.get('volume')}")
-        except FutureTimeout:
-            print(f"[BVC] getCours({name}) TIMEOUT")
-        except Exception as e:
-            print(f"[BVC] getCours({name}) ERROR: {e}")
-
-        # getKeyIndicators — timeout 11s
-        try:
-            ind = fut_ind.result(timeout=11)
-            result["chiffres_cles"] = ind.get("Chiffres_cles", {})
-            result["ratios"]        = ind.get("Ratio", {})
-            result["actionnaires"]  = ind.get("Actionnaires", {})
-            result["info_societe"]  = ind.get("Info_Societe", {})
-            print(f"[BVC] getKeyIndicators({name}) → OK")
-        except FutureTimeout:
-            print(f"[BVC] getKeyIndicators({name}) TIMEOUT")
-        except Exception as e:
-            print(f"[BVC] getKeyIndicators({name}) ERROR: {e}")
+    # ── Appel 2 : signaux techniques ─────────────────────────────────────────
+    try:
+        r2 = http.get(
+            f"{DRAHMI_BASE}/intelligence/stocks/{ticker}/signals",
+            headers=headers,
+            params={"range": "3M"},
+            timeout=8,
+        )
+        if r2.status_code == 200:
+            data2 = r2.json()
+            signals = data2.get("data", {}).get("signals", [])
+            result["signals"] = signals
+            print(f"[DRAHMI] {ticker} signals → {len(signals)} signaux")
+    except Exception as e:
+        print(f"[DRAHMI] {ticker} signals ERROR: {e}")
 
     return result
 
@@ -333,84 +246,43 @@ def fetch_bvc_data(name):
 # ---------------------------------------------------------------------------
 # Formatage données pour Claude
 # ---------------------------------------------------------------------------
-def _format_scraped_for_claude(ticker, sd):
-    if not sd or sd.get("source") != "bvcscrap":
+def _format_data_for_claude(ticker, sd):
+    if not sd or sd.get("source") != "drahmi" or not sd.get("cours"):
         return (
             "Données marché non disponibles. "
             "Formule des hypothèses réalistes basées sur le contexte du marché marocain."
         )
 
-    lines = [f"Données BVC officielles — casablanca-bourse.com — {sd.get('scraped_at', '')} :\n"]
+    lines = [f"Données marché — API Drahmi — {sd.get('fetched_at', '')} :\n"]
 
     # Cours
-    if sd.get("cours"):
-        var = sd.get("variation")
-        var_str = f" ({var:+.2f}%)" if var is not None else ""
-        lines.append(f"💰 COURS : {sd['cours']:,.2f} MAD{var_str}")
-    if sd.get("haut") and sd.get("bas"):
-        lines.append(f"- Séance Haut/Bas : {sd['haut']:,.2f} / {sd['bas']:,.2f} MAD")
-    if sd.get("ouverture"):
-        lines.append(f"- Ouverture : {sd['ouverture']:,.2f} MAD")
-    if sd.get("clot_precedent"):
-        lines.append(f"- Clôture préc. : {sd['clot_precedent']:,.2f} MAD")
+    cours = sd["cours"]
+    var   = sd.get("variation")
+    var_str = f"{var:+.2f}%" if var is not None else "—"
+    lines.append(f"💰 COURS : {cours:,.2f} MAD ({var_str})")
+
     if sd.get("volume"):
-        lines.append(f"- Volume : {int(sd['volume']):,} titres")
+        lines.append(f"- Volume séance   : {sd['volume']:,.0f} MAD")
     if sd.get("capitalisation"):
-        lines.append(f"- Capitalisation : {sd['capitalisation']:,.0f} MAD")
+        lines.append(f"- Capitalisation  : {sd['capitalisation']:,.0f} MAD")
+    if sd.get("week52_high") and sd.get("week52_low"):
+        lines.append(f"- 52S Haut/Bas    : {sd['week52_high']:,.2f} / {sd['week52_low']:,.2f} MAD")
 
-    # Chiffres clés (3 ans)
-    ck = sd.get("chiffres_cles", {})
-    annees = ck.get("Annee", [])
-    if annees:
-        lines.append(f"\nChiffres clés — années : {', '.join(str(a) for a in annees)}")
-        for label, key in [
-            ("Chiffre d'affaires", "Chiffre_Affaires"),
-            ("Résultat exploitation", "Resultat_exploitation"),
-            ("Résultat net", "Resultat_net"),
-            ("Capitaux propres", "Capitaux_propres"),
-        ]:
-            vals = ck.get(key, [])
-            if any(v is not None for v in vals):
-                row = " | ".join(
-                    f"{_bvc_num(v):,.1f}" if _bvc_num(v) is not None else "—"
-                    for v in vals
-                )
-                lines.append(f"  {label} : {row}")
+    lines.append("\nRatios :")
+    if sd.get("per"):
+        lines.append(f"  PER             : {sd['per']:.2f}x")
+    if sd.get("beta"):
+        lines.append(f"  Bêta            : {sd['beta']:.2f}")
+    if sd.get("div_yield"):
+        lines.append(f"  Rendement div.  : {sd['div_yield']:.2f}%")
 
-    # Ratios (3 ans)
-    rat = sd.get("ratios", {})
-    rat_annees = rat.get("Annee", [])
-    if rat_annees:
-        lines.append(f"\nRatios boursiers — années : {', '.join(str(a) for a in rat_annees)}")
-        for label, key in [
-            ("PER", "PER"), ("BPA (MAD)", "BPA"),
-            ("ROE (%)", "ROE"), ("PBR", "PBR"),
-            ("Rendement div. (%)", "Dividend_yield"),
-            ("Payout (%)", "Payout"),
-        ]:
-            vals = rat.get(key, [])
-            if any(v is not None for v in vals):
-                row = " | ".join(
-                    f"{_bvc_num(v):.2f}" if _bvc_num(v) is not None else "—"
-                    for v in vals
-                )
-                lines.append(f"  {label} : {row}")
-
-    # Actionnaires
-    act = sd.get("actionnaires", {})
-    if act:
-        lines.append("\nActionnariat :")
-        for nom, pct in list(act.items())[:5]:
-            lines.append(f"  - {nom} : {pct}")
-
-    # Dernières séances
-    sp = sd.get("seance_prec", {})
-    dates = sp.get("Date", [])
-    clots = sp.get("Cloture", [])
-    if dates and clots:
-        lines.append("\nDernières séances :")
-        for d, c in zip(dates[-5:], clots[-5:]):
-            lines.append(f"  {d} → {c} MAD")
+    # Signaux techniques
+    signals = sd.get("signals", [])
+    if signals:
+        lines.append("\nSignaux techniques (3M) :")
+        for s in signals:
+            status = "✅ DÉCLENCHÉ" if s.get("triggered") else "⬜ non déclenché"
+            lines.append(f"  [{status}] {s.get('name')} — {s.get('why', '')}")
 
     return "\n".join(lines)
 
@@ -426,7 +298,7 @@ def get_client():
 
 
 def generate_analysis(ticker, sector, sd):
-    data_context    = _format_scraped_for_claude(ticker, sd)
+    data_context    = _format_data_for_claude(ticker, sd)
     company_context = get_company_context(ticker)
     company_section = f"\n{company_context}\n" if company_context else ""
 
@@ -436,18 +308,11 @@ def generate_analysis(ticker, sector, sd):
         cours   = sd["cours"]
         var     = sd.get("variation")
         var_str = f"{var:+.2f}%" if var is not None else "—"
-        haut    = f"{sd['haut']:,.2f}" if sd.get("haut") else "—"
-        bas     = f"{sd['bas']:,.2f}" if sd.get("bas") else "—"
-        vol     = f"{int(sd['volume']):,}" if sd.get("volume") else "—"
-
-        # Calcul cours cible depuis ratios BPA × PER moyen si dispo
-        rat   = sd.get("ratios", {})
-        bpas  = [_bvc_num(v) for v in rat.get("BPA", []) if _bvc_num(v)]
-        pers  = [_bvc_num(v) for v in rat.get("PER", []) if _bvc_num(v)]
-        cible_str = "—"
-        if bpas and pers:
-            cible = bpas[-1] * pers[-1]
-            cible_str = f"{cible:,.2f} MAD (BPA×PER)"
+        vol     = f"{sd['volume']:,.0f}" if sd.get("volume") else "—"
+        h52     = f"{sd['week52_high']:,.2f}" if sd.get("week52_high") else "—"
+        l52     = f"{sd['week52_low']:,.2f}" if sd.get("week52_low") else "—"
+        per     = f"{sd['per']:.2f}x" if sd.get("per") else "—"
+        dy      = f"{sd['div_yield']:.2f}%" if sd.get("div_yield") else "—"
 
         price_snapshot = f"""
 **💰 COURS BVC : {cours:,.2f} MAD ({var_str})**
@@ -455,10 +320,10 @@ def generate_analysis(ticker, sector, sd):
 |---|---|
 | Cours actuel | **{cours:,.2f} MAD** |
 | Variation séance | {var_str} |
-| Haut du jour | {haut} MAD |
-| Bas du jour | {bas} MAD |
-| Volume | {vol} titres |
-| Cours cible estimé | {cible_str} |
+| Volume séance | {vol} MAD |
+| 52S Haut / Bas | {h52} / {l52} MAD |
+| PER | {per} |
+| Rendement dividende | {dy} |
 
 """
 
@@ -475,14 +340,13 @@ Structure OBLIGATOIRE (7 sections) :
 - Positionnement marché marocain, concurrents clés
 
 ## 📊 2. Analyse fondamentale
-- CA, résultat net, marges (utilise les 3 années fournies, calcule les évolutions YoY)
-- PER, BPA, ROE, PBR, rendement dividende (données fournies)
+- PER, rendement dividende, beta (données fournies)
 - Capitalisation, valorisation vs secteur et historique
 - Forces, faiblesses, risques macro/sectoriels, perspectives
 
 ## 📈 3. Analyse technique
-- Tendances court/moyen/long terme basées sur les dernières séances fournies
-- Supports et résistances clés (MAD) déduits du cours actuel et historique
+- Tendances court/moyen terme basées sur les signaux fournis
+- Supports et résistances clés (MAD) déduits du cours actuel et du 52S
 - Configuration graphique actuelle
 
 ## ⚡ 4. Momentum
@@ -493,8 +357,8 @@ Structure OBLIGATOIRE (7 sections) :
 | Critère | {ticker} | Pair 1 | Pair 2 |
 |---|---|---|---|
 | PER | | | |
-| ROE | | | |
 | Rendement div. | | | |
+| Beta | | | |
 
 ## 🧾 6. Opinion
 - **ACHAT FORT** / **ACHAT** / **CONSERVER** / **ALLÉGER** / **VENTE**
@@ -509,7 +373,7 @@ Structure OBLIGATOIRE (7 sections) :
         model="claude-haiku-4-5",
         max_tokens=2000,
         messages=[{"role": "user", "content": prompt}],
-        timeout=12,   # 12s max pour Claude — budget total Render < 30s
+        timeout=12,
     )
     return response.content[0].text
 
@@ -536,9 +400,9 @@ def index():
 @app.route("/health")
 def health():
     return jsonify({
-        "status":        "ok",
-        "bvcscrap":      _BVCSCRAP_OK,
-        "api_key_set":   bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "status":      "ok",
+        "drahmi":      bool(os.environ.get("DRAHMI_API_KEY")),
+        "anthropic":   bool(os.environ.get("ANTHROPIC_API_KEY")),
     })
 
 
@@ -554,17 +418,12 @@ def analyze():
             return jsonify({"error": "Ticker invalide"}), 400
 
         sector = SECTORS.get(ticker, "Secteur divers")
-        name   = BVC_NAMES.get(ticker)
 
-        sd = {"source": "none"}
-        if name:
-            try:
-                sd = fetch_bvc_data(name)
-            except Exception as e:
-                print(f"[WARN] BVCscrap failed for {ticker} ({name}): {e}")
-                sd = {"source": "none", "error": str(e)}
-        else:
-            print(f"[WARN] No BVCscrap name for {ticker}")
+        try:
+            sd = fetch_drahmi_data(ticker)
+        except Exception as e:
+            print(f"[WARN] Drahmi failed for {ticker}: {e}")
+            sd = {"source": "none", "error": str(e)}
 
         analysis = generate_analysis(ticker, sector, sd)
 
