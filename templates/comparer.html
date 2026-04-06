@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>BVC — Comparaison d'Actions</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet"/>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet"/>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root{
+      --bvc-green:#00843D; --dark:#1a1a2e; --card:#16213e; --accent:#0f3460;
+      --green:#00e676; --yellow:#ffd600; --red:#ef5350; --blue:#4fc3f7; --purple:#ce93d8;
+    }
+    *{box-sizing:border-box}
+    body{background:var(--dark);color:#e0e0e0;font-family:'Segoe UI',sans-serif;min-height:100vh}
+
+    /* ── Nav ──── */
+    .nav-link-c{color:rgba(255,255,255,.6);font-size:.87rem;padding:.3rem .8rem;border-radius:6px;text-decoration:none;transition:background .15s}
+    .nav-link-c:hover,.nav-link-c.active{background:rgba(0,132,61,.2);color:#fff}
+
+    /* ── Spinner ── */
+    .spinner-overlay{display:none;position:fixed;inset:0;background:rgba(10,10,30,.88);z-index:9999;flex-direction:column;align-items:center;justify-content:center}
+    .spinner-overlay.active{display:flex}
+
+    /* ── Hero ──── */
+    .hero-card{background:linear-gradient(135deg,var(--accent),var(--card));border:1px solid rgba(0,132,61,.3);border-radius:16px}
+    .ticker-input{background:rgba(255,255,255,.07)!important;border:2px solid rgba(0,132,61,.35)!important;color:#fff!important;font-size:1.1rem;font-weight:700;border-radius:10px!important;text-align:center;letter-spacing:.12em;text-transform:uppercase}
+    .ticker-input:focus{border-color:var(--bvc-green)!important;box-shadow:0 0 0 3px rgba(0,132,61,.2)!important}
+    .vs-badge{background:rgba(255,255,255,.1);border-radius:50%;width:52px;height:52px;display:flex;align-items:center;justify-content:center;font-size:1.1rem;font-weight:900;color:#fff;flex-shrink:0;border:2px solid rgba(255,255,255,.2)}
+
+    /* ── Stock panels ── */
+    .stock-panel{background:var(--card);border-radius:16px;border:1px solid rgba(255,255,255,.08);overflow:hidden;transition:border-color .2s}
+    .stock-panel.s1{border-top:4px solid var(--blue)}
+    .stock-panel.s2{border-top:4px solid var(--purple)}
+    .panel-header{padding:1.1rem 1.3rem .7rem}
+    .panel-body{padding:.5rem 1.3rem 1.2rem}
+    .ticker-tag{font-weight:800;border-radius:7px;padding:.18rem .65rem;font-size:1rem;letter-spacing:.06em}
+    .tag-s1{background:var(--blue);color:#0d2137}
+    .tag-s2{background:var(--purple);color:#1a0030}
+    .metric-row{display:flex;justify-content:space-between;align-items:center;padding:.32rem 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:.84rem}
+    .metric-row:last-child{border-bottom:none}
+    .metric-lbl{color:#8899aa;font-size:.75rem;text-transform:uppercase;letter-spacing:.04em}
+    .metric-val{font-weight:600}
+
+    /* ── Win/Lose highlight ── */
+    .win{color:var(--green)!important;font-weight:700!important}
+    .lose{color:#546e7a!important}
+    .win-cell{background:rgba(0,200,83,.08);border-radius:5px;padding:.05rem .3rem}
+    .lose-cell{opacity:.65}
+
+    /* ── RSI gauge ── */
+    .rsi-track{height:5px;border-radius:3px;background:linear-gradient(to right,#1b5e20 0%,#1b5e20 30%,#37474f 30%,#37474f 70%,#b71c1c 70%,#b71c1c 100%);position:relative;margin:3px 0 2px}
+    .rsi-needle{width:8px;height:12px;background:#fff;border-radius:2px;position:absolute;top:-4px;transform:translateX(-50%);box-shadow:0 0 4px rgba(0,0,0,.5)}
+    .rsi-oversold{color:var(--green)} .rsi-low{color:#80cbc4} .rsi-neutral{color:#90a4ae} .rsi-high{color:#ffb74d} .rsi-overbought{color:var(--red)}
+
+    /* ── 52w bar ── */
+    .range-bar{height:8px;background:rgba(255,255,255,.1);border-radius:4px;position:relative;overflow:visible;margin:4px 0}
+    .range-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--red),var(--yellow),var(--green))}
+    .range-needle{width:12px;height:16px;background:#fff;border-radius:3px;position:absolute;top:-4px;transform:translateX(-50%);box-shadow:0 0 5px rgba(0,0,0,.5)}
+
+    /* ── Score ring ── */
+    .score-ring{position:relative;width:80px;height:80px}
+    .score-ring canvas{transform:rotate(-90deg)}
+    .score-num{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+    .score-num .num{font-size:1.3rem;font-weight:800;line-height:1}
+    .score-num .lbl{font-size:.6rem;text-transform:uppercase;letter-spacing:.06em;color:#8899aa}
+
+    /* ── Trend badge ── */
+    .trend-bull{color:var(--green);font-weight:700}
+    .trend-bear{color:var(--red);font-weight:700}
+    .trend-neutral{color:var(--yellow)}
+
+    /* ── MA badge ── */
+    .ma-bull{color:var(--green);font-weight:600}
+    .ma-bear{color:var(--red);font-weight:600}
+    .ma-neutral{color:#78909c}
+
+    /* ── Signal badge ── */
+    .sig-badge{font-size:.7rem;font-weight:700;padding:.2rem .55rem;border-radius:20px;letter-spacing:.04em}
+    .badge-achat{background:rgba(0,200,83,.15);color:var(--green);border:1px solid rgba(0,200,83,.3)}
+    .badge-surveiller{background:rgba(255,214,0,.12);color:var(--yellow);border:1px solid rgba(255,214,0,.25)}
+    .badge-neutre{background:rgba(84,110,122,.2);color:#90a4ae;border:1px solid rgba(84,110,122,.25)}
+
+    /* ── Comparison table ── */
+    .cmp-table th{color:var(--blue);font-size:.8rem;text-transform:uppercase;letter-spacing:.05em;border-color:rgba(255,255,255,.08)!important;background:rgba(0,132,61,.1)!important;padding:.5rem .7rem}
+    .cmp-table td{border-color:rgba(255,255,255,.06)!important;padding:.45rem .7rem;vertical-align:middle;font-size:.85rem}
+    .cmp-table tr:hover td{background:rgba(255,255,255,.03)}
+    .cmp-winner-badge{background:rgba(0,200,83,.15);color:var(--green);border-radius:20px;padding:.1rem .5rem;font-size:.68rem;font-weight:700;border:1px solid rgba(0,200,83,.3)}
+    .cmp-draw-badge{background:rgba(100,100,100,.15);color:#78909c;border-radius:20px;padding:.1rem .5rem;font-size:.68rem}
+
+    /* ── Radar chart ── */
+    .radar-card{background:var(--card);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:1.2rem}
+
+    /* ── AI analysis ── */
+    .ai-card{background:var(--card);border:1px solid rgba(0,132,61,.2);border-radius:14px}
+    .md-bullet{display:flex;gap:.5rem;margin-bottom:.3rem;align-items:flex-start}
+    .md-bullet-dot{color:var(--bvc-green);flex-shrink:0;margin-top:.2rem}
+    .md-num-item{display:flex;gap:.5rem;margin-bottom:.3rem;align-items:flex-start}
+    .md-num-badge{background:rgba(0,132,61,.25);color:var(--blue);border-radius:50%;width:1.2rem;height:1.2rem;font-size:.68rem;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:.1rem}
+    .section-h2-num{display:inline-block;background:rgba(0,132,61,.2);color:var(--blue);border-radius:4px;padding:.06rem .38rem;font-size:.75rem;font-weight:700;margin-right:.3rem}
+
+    /* ── Misc ── */
+    #results{display:none} #aiSection{display:none}
+    .divider{border-color:rgba(255,255,255,.07);margin:1.8rem 0}
+    .metric-card{background:var(--card);border:1px solid rgba(255,255,255,.07);border-radius:12px;padding:.9rem 1rem}
+    .error-panel{background:rgba(255,0,0,.08);border:1px solid rgba(255,0,0,.2);border-radius:10px;padding:1rem}
+  </style>
+</head>
+<body>
+
+<!-- Spinner -->
+<div class="spinner-overlay" id="spinner">
+  <div class="spinner-border text-success mb-3" style="width:3rem;height:3rem"></div>
+  <p class="fw-semibold text-white mb-1" id="spinnerMsg">Récupération des données…</p>
+  <small class="text-secondary">Drahmi API — 4 appels en parallèle</small>
+</div>
+
+<!-- Navbar -->
+<nav class="navbar navbar-dark px-4 py-3" style="background:rgba(0,0,0,.4);border-bottom:1px solid rgba(0,132,61,.2)">
+  <a class="navbar-brand fw-bold fs-5" href="/">
+    <i class="bi bi-graph-up-arrow me-2"></i>BVC <span style="color:var(--bvc-green)">Trading</span> Dashboard
+  </a>
+  <div class="d-flex gap-2">
+    <a href="/"            class="nav-link-c"><i class="bi bi-search me-1"></i>Analyse</a>
+    <a href="/opportunites" class="nav-link-c"><i class="bi bi-lightning-charge me-1"></i>Opportunités</a>
+    <a href="/comparer"    class="nav-link-c active"><i class="bi bi-arrow-left-right me-1"></i>Comparer</a>
+  </div>
+</nav>
+
+<div class="container py-4" style="max-width:1200px">
+
+  <!-- ── Hero ─────────────────────────────────────────────────────────────── -->
+  <div class="hero-card p-4 mb-4">
+    <h1 class="fs-4 fw-bold mb-1"><i class="bi bi-arrow-left-right text-info me-2"></i>Comparaison d'Actions BVC</h1>
+    <p class="text-secondary mb-3" style="font-size:.85rem">
+      Comparez deux valeurs côte à côte — RSI · Signaux MA · Tendance prix · Actions émises ·
+      Position 52S · Score opportunité · Radar graphique.
+    </p>
+    <div class="d-flex align-items-center gap-3 flex-wrap">
+      <input id="t1" type="text" class="form-control ticker-input" style="max-width:130px"
+             placeholder="ATW" maxlength="8" oninput="this.value=this.value.toUpperCase()"/>
+      <div class="vs-badge">VS</div>
+      <input id="t2" type="text" class="form-control ticker-input" style="max-width:130px"
+             placeholder="IAM" maxlength="8" oninput="this.value=this.value.toUpperCase()"/>
+      <button class="btn btn-success fw-bold px-4" onclick="doCompare()">
+        <i class="bi bi-arrow-left-right me-1"></i>Comparer
+      </button>
+    </div>
+    <!-- Quick pairs -->
+    <div class="mt-3 d-flex flex-wrap gap-2" style="font-size:.78rem">
+      <span class="text-secondary me-1">Paires rapides :</span>
+      <button class="btn btn-sm" style="background:rgba(255,255,255,.07);color:#ccc;border:1px solid rgba(255,255,255,.12);font-size:.75rem" onclick="quickPair('ATW','BCP')">ATW vs BCP</button>
+      <button class="btn btn-sm" style="background:rgba(255,255,255,.07);color:#ccc;border:1px solid rgba(255,255,255,.12);font-size:.75rem" onclick="quickPair('SMI','MNG')">SMI vs MNG</button>
+      <button class="btn btn-sm" style="background:rgba(255,255,255,.07);color:#ccc;border:1px solid rgba(255,255,255,.12);font-size:.75rem" onclick="quickPair('TMA','GAZ')">TMA vs GAZ</button>
+      <button class="btn btn-sm" style="background:rgba(255,255,255,.07);color:#ccc;border:1px solid rgba(255,255,255,.12);font-size:.75rem" onclick="quickPair('IAM','HPS')">IAM vs HPS</button>
+      <button class="btn btn-sm" style="background:rgba(255,255,255,.07);color:#ccc;border:1px solid rgba(255,255,255,.12);font-size:.75rem" onclick="quickPair('WAA','ACM')">WAA vs ACM</button>
+      <button class="btn btn-sm" style="background:rgba(255,255,255,.07);color:#ccc;border:1px solid rgba(255,255,255,.12);font-size:.75rem" onclick="quickPair('DHO','LBV')">DHO vs LBV</button>
+    </div>
+  </div>
+
+  <div id="errorAlert" class="alert alert-danger d-none mb-3"></div>
+
+  <!-- ── RESULTS ───────────────────────────────────────────────────────────── -->
+  <div id="results">
+
+    <!-- Side-by-side panels + Radar -->
+    <div class="row g-3 mb-4" id="panelsRow">
+      <div class="col-12 col-lg-5" id="panel1"></div>
+      <div class="col-12 col-lg-2 d-flex align-items-center justify-content-center">
+        <div class="text-center">
+          <div class="vs-badge mx-auto mb-3" style="width:60px;height:60px;font-size:1.3rem">VS</div>
+          <div id="verdictBadge" class="mb-2"></div>
+          <div id="verdictText" class="text-secondary" style="font-size:.78rem;max-width:120px;text-align:center"></div>
+        </div>
+      </div>
+      <div class="col-12 col-lg-5" id="panel2"></div>
+    </div>
+
+    <!-- Radar chart -->
+    <div class="radar-card mb-4">
+      <h6 class="fw-bold mb-3" style="color:var(--blue)"><i class="bi bi-hexagon me-2"></i>Radar — Profil Comparatif</h6>
+      <div class="row g-3 align-items-center">
+        <div class="col-12 col-md-7 mx-auto" style="max-height:360px">
+          <canvas id="radarChart"></canvas>
+        </div>
+        <div class="col-12 col-md-5" id="radarLegend"></div>
+      </div>
+    </div>
+
+    <!-- Comparison table -->
+    <div class="metric-card mb-4">
+      <h6 class="fw-bold mb-3" style="color:var(--blue)"><i class="bi bi-table me-2"></i>Tableau Comparatif Complet</h6>
+      <div class="table-responsive">
+        <table class="table table-dark cmp-table mb-0" id="cmpTable"></table>
+      </div>
+    </div>
+
+    <!-- AI btn -->
+    <div class="text-center my-4" id="aiBtnDiv">
+      <button class="btn btn-outline-warning fw-semibold px-5" onclick="runAI()">
+        <i class="bi bi-stars me-2"></i>Analyse IA comparative détaillée
+      </button>
+      <div class="text-secondary mt-1" style="font-size:.75rem">Claude Haiku · ~15 s · 1 crédit</div>
+    </div>
+
+    <!-- AI section -->
+    <div id="aiSection" class="ai-card p-4 mb-5">
+      <h5 class="fw-bold mb-3" style="color:#ffd700"><i class="bi bi-stars me-2"></i>Analyse IA — Comparaison Détaillée</h5>
+      <div id="aiContent"></div>
+    </div>
+
+  </div><!-- /results -->
+</div>
+
+<footer class="text-center text-secondary py-3" style="font-size:.78rem;border-top:1px solid rgba(255,255,255,.05)">
+  Propulsé par <strong>Claude Haiku 4.5</strong> · Données BVC via <strong>Drahmi API</strong>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// ─── State ────────────────────────────────────────────────────────────────────
+let _s1={}, _s2={};
+let _radarChart = null;
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+const fmt  = (n,d=2)=> n==null?'—':parseFloat(n).toLocaleString('fr-FR',{minimumFractionDigits:d,maximumFractionDigits:d});
+const fmtN = n => n==null?'—':parseInt(n).toLocaleString('fr-FR');
+const fmtPct = v => v==null?'—':`${v>=0?'+':''}${fmt(v,1)}%`;
+
+function varHtml(v){
+  if(v==null) return '<span class="text-secondary">—</span>';
+  const c=v>0?'text-success':v<0?'text-danger':'text-secondary';
+  return `<span class="${c} fw-semibold">${fmtPct(v)}</span>`;
+}
+function sigBadge(sig){
+  return sig==='ACHAT'      ?`<span class="sig-badge badge-achat">✅ ACHAT</span>`
+        :sig==='SURVEILLER' ?`<span class="sig-badge badge-surveiller">👁 SURVEILLER</span>`
+                            :`<span class="sig-badge badge-neutre">⬜ NEUTRE</span>`;
+}
+function scoreColor(s){ return s>=68?'var(--green)':s>=48?'var(--yellow)':'#78909c'; }
+function maSigHtml(m){
+  return m==='bullish'?'<span class="ma-bull"><i class="bi bi-arrow-up-right me-1"></i>Haussier</span>'
+        :m==='bearish'?'<span class="ma-bear"><i class="bi bi-arrow-down-right me-1"></i>Baissier</span>'
+                      :'<span class="ma-neutral">— Neutre</span>';
+}
+function trendHtml(t){
+  if(!t) return '—';
+  return t.includes('Haussière')?`<span class="trend-bull">${t}</span>`
+        :t.includes('Baissière')?`<span class="trend-bear">${t}</span>`
+                                :`<span class="trend-neutral">${t}</span>`;
+}
+function rsiHtml(rsi, label){
+  if(rsi==null) return '—';
+  const cls=label==='Survente'?'rsi-oversold':label==='Bas'?'rsi-low':
+            label==='Neutre'?'rsi-neutral':label==='Haut'?'rsi-high':'rsi-overbought';
+  const pct=Math.min(100,Math.max(0,rsi));
+  return `<span class="rsi-val ${cls}">${rsi}</span>
+          <div class="rsi-track"><div class="rsi-needle" style="left:${pct}%"></div></div>
+          <span class="text-secondary" style="font-size:.65rem">${label}</span>`;
+}
+
+// ── 52-week range bar ─────────────────────────────────────────────────────────
+function range52Html(s){
+  const l=s.week52_low, h=s.week52_high, c=s.cours;
+  if(!l||!h||!c) return '—';
+  const pct=Math.min(100,Math.max(0,(c-l)/(h-l)*100));
+  return `<div class="range-bar"><div class="range-fill" style="width:100%"></div>
+    <div class="range-needle" style="left:${pct.toFixed(1)}%"></div></div>
+    <div class="d-flex justify-content-between mt-1" style="font-size:.65rem;color:#607d8b">
+      <span>${fmt(l,0)}</span><span style="color:#fff">${fmt(c,1)}</span><span>${fmt(h,0)}</span>
+    </div>`;
+}
+
+// ── Score ring (SVG-based doughnut) ───────────────────────────────────────────
+function scoreRingHtml(score, color, tag){
+  const r=34, circ=2*Math.PI*r;
+  const dash=circ*(score/100);
+  const gap=circ-dash;
+  return `
+  <div class="d-flex align-items-center gap-2 mb-1">
+    <svg width="80" height="80" viewBox="0 0 80 80">
+      <circle cx="40" cy="40" r="${r}" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="7"/>
+      <circle cx="40" cy="40" r="${r}" fill="none" stroke="${color}" stroke-width="7"
+              stroke-dasharray="${dash.toFixed(1)} ${gap.toFixed(1)}"
+              stroke-linecap="round" transform="rotate(-90 40 40)" style="transition:stroke-dasharray .7s ease"/>
+      <text x="40" y="37" text-anchor="middle" fill="#fff" font-size="15" font-weight="800">${score}</text>
+      <text x="40" y="50" text-anchor="middle" fill="#8899aa" font-size="8">/100</text>
+    </svg>
+    <div>${sigBadge(tag)}</div>
+  </div>`;
+}
+
+// ─── Build stock panel ────────────────────────────────────────────────────────
+function buildPanel(s, side){
+  if(s.error) return `<div class="stock-panel ${side} p-4 h-100">
+    <div class="error-panel"><i class="bi bi-exclamation-circle me-2"></i>${s.ticker} — ${s.error}</div></div>`;
+
+  const c = side==='s1'?'var(--blue)':'var(--purple)';
+  const tagCls = side==='s1'?'tag-s1':'tag-s2';
+
+  return `
+  <div class="stock-panel ${side} h-100">
+    <div class="panel-header">
+      <div class="d-flex align-items-start justify-content-between gap-2 mb-2">
+        <div>
+          <span class="ticker-tag ${tagCls}">${s.ticker}</span>
+          <span class="text-secondary ms-2" style="font-size:.78rem">${s.sector||''}</span>
+        </div>
+        ${sigBadge(s.signal)}
+      </div>
+      <div class="fw-bold" style="font-size:1.35rem;color:${c}">${fmt(s.cours)} <small class="text-secondary fw-normal" style="font-size:.75rem">MAD</small></div>
+      <div>${varHtml(s.variation)} <span class="text-secondary ms-2" style="font-size:.78rem">${s.name||''}</span></div>
+    </div>
+    <div class="panel-body">
+
+      <!-- Score ring -->
+      <div class="mb-3">${scoreRingHtml(s.score, scoreColor(s.score), s.signal)}</div>
+
+      <!-- RSI -->
+      <div class="metric-row">
+        <span class="metric-lbl">RSI (14)</span>
+        <div class="text-end">${rsiHtml(s.rsi, s.rsi_label)}</div>
+      </div>
+
+      <!-- MA Signal -->
+      <div class="metric-row">
+        <span class="metric-lbl">Signal MA</span>
+        <span class="metric-val">${maSigHtml(s.ma_signal)}</span>
+      </div>
+
+      <!-- Tendance prix -->
+      <div class="metric-row">
+        <span class="metric-lbl">Tendance prix</span>
+        <span class="metric-val">${trendHtml(s.trend)}</span>
+      </div>
+
+      <!-- 52 sem. range -->
+      <div class="metric-row" style="flex-direction:column;align-items:flex-start;gap:.3rem">
+        <span class="metric-lbl">Position 52 semaines</span>
+        <div style="width:100%">${range52Html(s)}</div>
+        ${s.pos_52!=null?`<span style="font-size:.7rem;color:#607d8b">Position : ${s.pos_52}% depuis le bas</span>`:''}
+      </div>
+
+      <!-- Actions émises -->
+      <div class="metric-row">
+        <span class="metric-lbl"><i class="bi bi-layers me-1"></i>Actions émises</span>
+        <span class="metric-val" style="font-size:.82rem">${fmtN(s.shares_issued)}</span>
+      </div>
+
+      <!-- Cap -->
+      <div class="metric-row">
+        <span class="metric-lbl">Capitalisation</span>
+        <span class="metric-val" style="font-size:.82rem">${s.capitalisation?fmt(s.capitalisation/1e6,0)+' M MAD':'—'}</span>
+      </div>
+
+      <!-- PER / Div -->
+      <div class="metric-row">
+        <span class="metric-lbl">PER / Dividende</span>
+        <span class="metric-val">${s.per?fmt(s.per,1)+'x':'—'} / <span class="text-warning">${fmt(s.div_yield,1)}%</span></span>
+      </div>
+
+      <!-- Beta -->
+      <div class="metric-row">
+        <span class="metric-lbl">Bêta</span>
+        <span class="metric-val">${s.beta?fmt(s.beta,2):'—'}</span>
+      </div>
+
+      <!-- Entry / Target -->
+      <div class="mt-3 p-2 rounded" style="background:rgba(0,132,61,.1);border:1px solid rgba(0,132,61,.2)">
+        <div class="row g-0 text-center">
+          <div class="col-6" style="border-right:1px solid rgba(255,255,255,.08)">
+            <div class="text-secondary" style="font-size:.63rem;text-transform:uppercase;letter-spacing:.06em">Entrée recommandée</div>
+            <div class="fw-bold" style="color:var(--blue)">${fmt(s.entry,1)} MAD</div>
+          </div>
+          <div class="col-6">
+            <div class="text-secondary" style="font-size:.63rem;text-transform:uppercase;letter-spacing:.06em">Objectif 6M</div>
+            <div class="fw-bold text-success">${fmt(s.target,1)} <small style="font-size:.68rem">(+${s.upside_pct}%)</small></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Reasons -->
+      ${(s.reasons||[]).slice(0,3).map(r=>`<div class="d-flex gap-2 mt-2" style="font-size:.76rem"><span style="color:var(--bvc-green);flex-shrink:0">▸</span><span class="text-secondary">${r}</span></div>`).join('')}
+    </div>
+  </div>`;
+}
+
+// ─── Comparison table ─────────────────────────────────────────────────────────
+function buildCmpTable(s1, s2){
+  const rows = [
+    {label:'Score Opportunité',     v1:s1.score,          v2:s2.score,          fmt:(v)=>`${v}/100`,         higher:true,  color:true},
+    {label:'RSI (14)',              v1:s1.rsi,             v2:s2.rsi,             fmt:(v)=>`${v}`,             higher:false, rsi:true},
+    {label:'Signal MA',             v1:s1.ma_signal,       v2:s2.ma_signal,       fmt:(v)=>maSigHtml(v),       ma:true},
+    {label:'Tendance prix',         v1:s1.trend,           v2:s2.trend,           fmt:(v)=>trendHtml(v||'—'),  trend:true},
+    {label:'Position 52S (%)',      v1:s1.pos_52,          v2:s2.pos_52,          fmt:(v)=>v!=null?`${v}%`:'—', higher:false},
+    {label:'Actions émises',        v1:s1.shares_issued,   v2:s2.shares_issued,   fmt:(v)=>fmtN(v),            higher:false, neutral:true},
+    {label:'Capitalisation',        v1:s1.capitalisation,  v2:s2.capitalisation,  fmt:(v)=>v?fmt(v/1e6,0)+' M MAD':'—', higher:true, neutral:true},
+    {label:'PER',                   v1:s1.per,             v2:s2.per,             fmt:(v)=>v?`${fmt(v,1)}x`:'—', higher:false},
+    {label:'Rendement Dividende',   v1:s1.div_yield,       v2:s2.div_yield,       fmt:(v)=>`${fmt(v,1)}%`,     higher:true},
+    {label:'Bêta (risque)',         v1:s1.beta,            v2:s2.beta,            fmt:(v)=>v?fmt(v,2):'—',     higher:false},
+    {label:'Potentiel 6M (%)',      v1:s1.upside_pct,      v2:s2.upside_pct,      fmt:(v)=>`+${v}%`,           higher:true, color:true},
+    {label:'Entrée recommandée',    v1:s1.entry,           v2:s2.entry,           fmt:(v)=>`${fmt(v,1)} MAD`,  higher:false, neutral:true},
+  ];
+
+  let html = `<thead><tr>
+    <th>Critère</th>
+    <th class="text-center" style="color:var(--blue)">${s1.ticker}</th>
+    <th class="text-center" style="color:var(--purple)">${s2.ticker}</th>
+    <th class="text-center">Avantage</th>
+  </tr></thead><tbody>`;
+
+  rows.forEach(row=>{
+    let winner = null;
+    if(!row.neutral && row.v1!=null && row.v2!=null){
+      if(row.ma){
+        const rank={bullish:2,neutral:1,bearish:0};
+        winner=rank[row.v1]>rank[row.v2]?'s1':rank[row.v2]>rank[row.v1]?'s2':'draw';
+      } else if(row.trend){
+        const rank={'🟢 Haussière':2,'🟡 Neutre':1,'🔴 Baissière':0};
+        winner=rank[row.v1]>rank[row.v2]?'s1':rank[row.v2]>rank[row.v1]?'s2':'draw';
+      } else if(row.rsi){
+        // RSI: 40-60 is optimal, distance from 50 is bad
+        const d1=Math.abs(row.v1-50), d2=Math.abs(row.v2-50);
+        winner=d1<d2?'s1':d2<d1?'s2':'draw';
+      } else {
+        winner=row.higher?(row.v1>row.v2?'s1':row.v2>row.v1?'s2':'draw')
+                         :(row.v1<row.v2?'s1':row.v2<row.v1?'s2':'draw');
+      }
+    }
+
+    const wBadge = winner==='draw' ? `<span class="cmp-draw-badge">Égalité</span>`
+                 : winner==='s1'   ? `<span class="cmp-winner-badge" style="color:var(--blue)">${s1.ticker}</span>`
+                 : winner==='s2'   ? `<span class="cmp-winner-badge" style="color:var(--purple)">${s2.ticker}</span>`
+                 : '';
+
+    const c1 = winner==='s1'?'win':'', c2 = winner==='s2'?'win':'';
+
+    html+=`<tr>
+      <td class="fw-semibold" style="font-size:.8rem">${row.label}</td>
+      <td class="text-center ${c1}">${row.fmt(row.v1)}</td>
+      <td class="text-center ${c2}">${row.fmt(row.v2)}</td>
+      <td class="text-center">${wBadge}</td>
+    </tr>`;
+  });
+
+  html+='</tbody>';
+  document.getElementById('cmpTable').innerHTML=html;
+}
+
+// ─── Radar chart ─────────────────────────────────────────────────────────────
+function buildRadar(s1, s2){
+  if(_radarChart){ _radarChart.destroy(); _radarChart=null; }
+  const labels=['Score\nopp.','RSI\n(zone)','PER\n(val.)','Dividende','Support\n52S','Signal\nMA','Momentum'];
+  const r1 = s1.radar||{};
+  const r2 = s2.radar||{};
+  const d1 = [r1.score,r1.rsi,r1.per,r1.div,r1.support,r1.ma,r1.momentum].map(v=>v||0);
+  const d2 = [r2.score,r2.rsi,r2.per,r2.div,r2.support,r2.ma,r2.momentum].map(v=>v||0);
+
+  _radarChart = new Chart(document.getElementById('radarChart'),{
+    type:'radar',
+    data:{
+      labels,
+      datasets:[
+        {label:s1.ticker, data:d1,
+         backgroundColor:'rgba(79,195,247,.15)', borderColor:'var(--blue)',
+         pointBackgroundColor:'var(--blue)', pointRadius:4, borderWidth:2},
+        {label:s2.ticker, data:d2,
+         backgroundColor:'rgba(206,147,216,.15)', borderColor:'var(--purple)',
+         pointBackgroundColor:'var(--purple)', pointRadius:4, borderWidth:2},
+      ]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:true,
+      scales:{r:{min:0,max:100,
+        angleLines:{color:'rgba(255,255,255,.1)'},
+        grid:{color:'rgba(255,255,255,.08)'},
+        pointLabels:{color:'#8899aa',font:{size:10}},
+        ticks:{color:'#607d8b',backdropColor:'transparent',stepSize:25}}},
+      plugins:{legend:{labels:{color:'#ccc',font:{size:12}}},
+               tooltip:{callbacks:{label:ctx=>`${ctx.dataset.label}: ${ctx.raw}/100`}}}
+    }
+  });
+
+  // Radar legend
+  const axes=[
+    {lbl:'Score Opportunité',  desc:'0–100, score global calculé'},
+    {lbl:'RSI Zone',           desc:'Proximité de la zone 40–60 (idéale)'},
+    {lbl:'PER (Valorisation)', desc:'PER faible = plus attractif'},
+    {lbl:'Dividende',          desc:'Rendement dividende (8%+ = 100)'},
+    {lbl:'Support 52S',        desc:'Proximité du bas 52 semaines'},
+    {lbl:'Signal MA',          desc:'Haussier=100, Neutre=50, Baissier=10'},
+    {lbl:'Momentum',           desc:'Variation séance normalisée'},
+  ];
+  document.getElementById('radarLegend').innerHTML=axes.map((a,i)=>`
+    <div class="d-flex gap-2 mb-1" style="font-size:.76rem">
+      <span class="text-secondary" style="min-width:14px">${i+1}.</span>
+      <div><span class="fw-semibold">${a.lbl}</span><br><span class="text-secondary">${a.desc}</span></div>
+    </div>`).join('');
+}
+
+// ─── Verdict ─────────────────────────────────────────────────────────────────
+function buildVerdict(s1, s2){
+  if(!s1.score||!s2.score) return;
+  const diff = s1.score - s2.score;
+  let winner, color, txt;
+  if(Math.abs(diff)<=5){
+    winner='Égalité'; color='var(--yellow)';
+    txt='Profils très similaires — choix selon le secteur';
+  } else if(diff>0){
+    winner=s1.ticker; color='var(--blue)';
+    txt=`Avantage de ${diff} pts sur le score`;
+  } else {
+    winner=s2.ticker; color='var(--purple)';
+    txt=`Avantage de ${Math.abs(diff)} pts sur le score`;
+  }
+  document.getElementById('verdictBadge').innerHTML=
+    `<div class="fw-bold" style="color:${color};font-size:1.05rem">${winner}</div>
+     <div style="font-size:.7rem;color:${color};opacity:.8">⭐ Meilleur score</div>`;
+  document.getElementById('verdictText').textContent=txt;
+}
+
+// ─── Main comparison ──────────────────────────────────────────────────────────
+function quickPair(a,b){ document.getElementById('t1').value=a; document.getElementById('t2').value=b; doCompare(); }
+
+async function doCompare(){
+  const t1=document.getElementById('t1').value.trim().toUpperCase();
+  const t2=document.getElementById('t2').value.trim().toUpperCase();
+  if(!t1||!t2){ alert('Entrez deux tickers.'); return; }
+
+  document.getElementById('errorAlert').classList.add('d-none');
+  document.getElementById('results').style.display='none';
+  document.getElementById('aiSection').style.display='none';
+  document.getElementById('aiBtnDiv').style.display='block';
+  document.getElementById('spinner').classList.add('active');
+  document.getElementById('spinnerMsg').textContent=`Comparaison ${t1} vs ${t2}…`;
+
+  try{
+    const res  = await fetch('/api/comparer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker1:t1,ticker2:t2})});
+    const data = await res.json();
+    if(data.error) throw new Error(data.error);
+
+    _s1=data.stock1||{}; _s2=data.stock2||{};
+
+    document.getElementById('panel1').innerHTML=buildPanel(_s1,'s1');
+    document.getElementById('panel2').innerHTML=buildPanel(_s2,'s2');
+
+    if(_s1.cours && _s2.cours){
+      buildCmpTable(_s1,_s2);
+      buildRadar(_s1,_s2);
+      buildVerdict(_s1,_s2);
+    }
+
+    document.getElementById('results').style.display='block';
+    document.getElementById('results').scrollIntoView({behavior:'smooth'});
+  }catch(err){
+    document.getElementById('errorAlert').textContent='❌ '+(err.message||'Erreur');
+    document.getElementById('errorAlert').classList.remove('d-none');
+  }finally{
+    document.getElementById('spinner').classList.remove('active');
+  }
+}
+
+// ─── AI Analysis ─────────────────────────────────────────────────────────────
+async function runAI(){
+  if(!_s1.cours||!_s2.cours){ alert('Lancez une comparaison d\'abord.'); return; }
+  document.getElementById('spinner').classList.add('active');
+  document.getElementById('spinnerMsg').textContent='Analyse IA comparative…';
+  try{
+    const res  = await fetch('/api/comparer-ia',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stock1:_s1,stock2:_s2})});
+    const data = await res.json();
+    if(data.error) throw new Error(data.error);
+    document.getElementById('aiContent').innerHTML=mdToHtml(data.analysis);
+    document.getElementById('aiSection').style.display='block';
+    document.getElementById('aiBtnDiv').style.display='none';
+    document.getElementById('aiSection').scrollIntoView({behavior:'smooth'});
+  }catch(err){ alert('Erreur IA : '+(err.message||'inconnue')); }
+  finally{ document.getElementById('spinner').classList.remove('active'); }
+}
+
+// ─── Markdown renderer ────────────────────────────────────────────────────────
+function applyInline(t){
+  return t.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+    .replace(/_(.+?)_/g,'<em>$1</em>')
+    .replace(/🟢\s*HAUSSIER/g,'<span class="badge bg-success">🟢 HAUSSIER</span>')
+    .replace(/🔴\s*BAISSIER/g,'<span class="badge bg-danger">🔴 BAISSIER</span>')
+    .replace(/🟡\s*NEUTRE/g,'<span class="badge bg-warning text-dark">🟡 NEUTRE</span>')
+    .replace(/\bACHAT\b/g,'<span class="badge bg-success">✅ ACHAT</span>')
+    .replace(/\bVENTE\b/g,'<span class="badge bg-danger">❌ VENTE</span>')
+    .replace(/\bCONSERVER\b/g,'<span class="badge bg-info text-dark">🔵 CONSERVER</span>')
+    .replace(/\bSURVEILLER\b/g,'<span class="badge bg-warning text-dark">👁 SURVEILLER</span>');
+}
+function mdTable(block){
+  const lines=block.trim().split('\n').filter(l=>l.trim());
+  if(lines.length<2) return block;
+  const isSep=l=>/^\|[\s\-:|]+\|/.test(l);
+  const parse=l=>l.replace(/^\||\|$/g,'').split('|').map(c=>c.trim());
+  let h='<div class="table-responsive my-2"><table class="table table-dark table-bordered table-sm" style="font-size:.84rem;border-color:rgba(255,255,255,.1)">';
+  let first=true;
+  lines.forEach(l=>{ if(isSep(l)) return; const c=parse(l);
+    if(first){ h+='<thead><tr>'+c.map(x=>`<th class="text-center" style="background:rgba(0,132,61,.18);color:var(--blue)">${applyInline(x)}</th>`).join('')+'</tr></thead><tbody>'; first=false; }
+    else h+='<tr>'+c.map((x,i)=>`<td class="${i===0?'fw-semibold':'text-center'}">${applyInline(x)}</td>`).join('')+'</tr>';
+  });
+  return h+'</tbody></table></div>';
+}
+function mdToHtml(text){
+  const lines=text.split('\n'); let html=''; let i=0;
+  while(i<lines.length){
+    const l=lines[i];
+    if(/^## /.test(l)){
+      const t=l.replace(/^## /,''); const nm=t.match(/^([^\s]+\s+\d+\.)/);
+      const np=nm?`<span class="section-h2-num">${nm[1]}</span>`:'';
+      html+=`<h5 class="fw-bold mt-4 mb-2 border-bottom pb-2" style="color:var(--blue)">${np}${applyInline(nm?t.slice(nm[0].length):t)}</h5>`;
+      i++; continue;
+    }
+    if(/^### /.test(l)){ html+=`<h6 class="fw-semibold mt-3 mb-1 text-warning">${applyInline(l.replace(/^### /,''))}</h6>`; i++; continue; }
+    if(/^\|/.test(l)){ let b=''; while(i<lines.length&&/^\|/.test(lines[i])){ b+=lines[i]+'\n'; i++; } html+=mdTable(b); continue; }
+    if(/^\s*\d+\.\s/.test(l)){
+      const cn=l.replace(/^\s*\d+\.\s/,''); const n=(l.trim().match(/^(\d+)\./)||['','•'])[1];
+      html+=`<div class="md-num-item"><span class="md-num-badge">${n}</span><span>${applyInline(cn)}</span></div>`;
+      i++; continue;
+    }
+    if(/^\s*[-*]\s/.test(l)){
+      html+=`<div class="md-bullet"><span class="md-bullet-dot">▸</span><span>${applyInline(l.replace(/^\s*[-*]\s/,''))}</span></div>`;
+      i++; continue;
+    }
+    if(/^\*\*.+\*\*\s*:?\s*$/.test(l.trim())){ html+=`<div class="fw-semibold mt-2 mb-1" style="color:#a0c8e8">${applyInline(l.trim())}</div>`; i++; continue; }
+    if(l.trim()===''){ html+='<div class="mb-1"></div>'; i++; continue; }
+    html+=`<p class="mb-1">${applyInline(l)}</p>`; i++;
+  }
+  return html;
+}
+
+// Enter key triggers compare
+document.addEventListener('keydown', e => { if(e.key==='Enter' && (document.activeElement===document.getElementById('t1')||document.activeElement===document.getElementById('t2'))) doCompare(); });
+</script>
+</body>
+</html>

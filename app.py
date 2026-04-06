@@ -1329,6 +1329,187 @@ Pour chacune :
     return jsonify({"analysis": response.content[0].text})
 
 
+# ---------------------------------------------------------------------------
+# Comparaison entre deux actions
+# ---------------------------------------------------------------------------
+
+def _enrich_stock(sd: dict) -> dict:
+    """Calcule tous les indicateurs + métadonnées sur un dict ticker."""
+    if not sd or not sd.get("cours"):
+        return sd or {}
+
+    score, reasons, rsi, ma_sig = compute_opportunity_score(sd, 0)
+    entry, target, upside = _compute_entry_and_target(sd, score)
+
+    cours = float(sd.get("cours", 0))
+    cap   = float(sd.get("capitalisation") or 0)
+
+    # Nombre d'actions émises (estimé)
+    shares_issued = int(round(cap / cours)) if cours > 0 and cap > 0 else None
+
+    # Position dans range 52S (0 = bas, 1 = haut)
+    h52 = sd.get("week52_high")
+    l52 = sd.get("week52_low")
+    pos_52 = None
+    if h52 and l52 and float(h52) > float(l52):
+        pos_52 = round((cours - float(l52)) / (float(h52) - float(l52)) * 100, 1)
+
+    # Tendance du prix
+    var = float(sd.get("variation") or 0)
+    if ma_sig == "bullish" and var > 0:
+        trend = "🟢 Haussière"
+    elif ma_sig == "bearish" or var < -2:
+        trend = "🔴 Baissière"
+    else:
+        trend = "🟡 Neutre"
+
+    # Axes radar (0-100 chacun, pour Chart.js)
+    rsi_radar  = max(0, 100 - abs(rsi - 50) * 2)            # RSI 50 = 100, 0 ou 100 = 0
+    per_radar  = 0
+    if sd.get("per"):
+        p = float(sd["per"])
+        per_radar = max(0, min(100, (30 - p) / 25 * 100))   # PER 5 = 100, PER 30 = 0
+    div_radar  = min(100, float(sd.get("div_yield") or 0) * 12)  # 8%+ = 100
+    pos_radar  = max(0, 100 - (pos_52 or 50))                # proche du bas = 100
+    ma_radar   = 100 if ma_sig == "bullish" else 50 if ma_sig == "neutral" else 10
+    mom_radar  = max(0, min(100, (var + 5) * 10))            # -5% = 0, +5% = 100
+
+    sd.update({
+        "score":         score,
+        "reasons":       reasons,
+        "rsi":           rsi,
+        "rsi_label":     _rsi_label(rsi),
+        "ma_signal":     ma_sig,
+        "entry":         entry,
+        "target":        target,
+        "upside_pct":    upside,
+        "signal":        ("ACHAT"      if score >= 68
+                          else "SURVEILLER" if score >= 48
+                          else "NEUTRE"),
+        "shares_issued": shares_issued,
+        "pos_52":        pos_52,
+        "trend":         trend,
+        "radar": {
+            "score":   score,
+            "rsi":     round(rsi_radar, 1),
+            "per":     round(per_radar, 1),
+            "div":     round(div_radar, 1),
+            "support": round(pos_radar, 1),
+            "ma":      ma_radar,
+            "momentum":round(mom_radar, 1),
+        },
+    })
+    return sd
+
+
+@app.route("/comparer")
+def comparer_page():
+    return render_template("comparer.html")
+
+
+@app.route("/api/comparer", methods=["POST"])
+def comparer_api():
+    body = request.get_json(force=True, silent=True) or {}
+    t1   = str(body.get("ticker1", "")).upper().strip()
+    t2   = str(body.get("ticker2", "")).upper().strip()
+
+    if not t1 or not t2:
+        return jsonify({"error": "Deux tickers requis"}), 400
+    if t1 == t2:
+        return jsonify({"error": "Veuillez entrer deux tickers différents"}), 400
+
+    # Fetch parallèle (4 appels Drahmi)
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        f1 = ex.submit(_fetch_ticker_full, t1)
+        f2 = ex.submit(_fetch_ticker_full, t2)
+        d1 = f1.result()
+        d2 = f2.result()
+
+    if not d1 and not d2:
+        return jsonify({"error": f"Aucune donnée pour {t1} et {t2}"}), 404
+
+    d1 = _enrich_stock(d1) if d1 else {"ticker": t1, "error": "Non trouvé dans Drahmi"}
+    d2 = _enrich_stock(d2) if d2 else {"ticker": t2, "error": "Non trouvé dans Drahmi"}
+
+    return jsonify({
+        "stock1":     d1,
+        "stock2":     d2,
+        "fetched_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+    })
+
+
+@app.route("/api/comparer-ia", methods=["POST"])
+def comparer_ia():
+    """Analyse comparative IA entre deux valeurs."""
+    body = request.get_json(force=True, silent=True) or {}
+    s1   = body.get("stock1", {})
+    s2   = body.get("stock2", {})
+    if not s1 or not s2 or not s1.get("cours") or not s2.get("cours"):
+        return jsonify({"error": "Données insuffisantes pour la comparaison"}), 400
+
+    def fmt_s(s):
+        sh = f"{s['shares_issued']:,}" if s.get("shares_issued") else "—"
+        return (
+            f"**{s['ticker']}** ({s.get('sector','?')}) | {s.get('name','')} :\n"
+            f"  Cours : {s['cours']:,.2f} MAD ({s.get('variation',0):+.2f}%)\n"
+            f"  RSI(14) : {s.get('rsi','?')} — {s.get('rsi_label','?')}\n"
+            f"  Signal MA : {s.get('ma_signal','?')} | Tendance : {s.get('trend','?')}\n"
+            f"  Score opp. : {s.get('score','?')}/100 | Signal : {s.get('signal','?')}\n"
+            f"  Capitalisation : {s.get('capitalisation',0):,.0f} MAD | "
+            f"Actions émises : {sh}\n"
+            f"  52S bas/haut : {s.get('week52_low','?')} – {s.get('week52_high','?')} MAD "
+            f"| Position : {s.get('pos_52','?')}%\n"
+            f"  PER : {s.get('per','?')} | Dividende : {s.get('div_yield',0):.1f}% "
+            f"| Bêta : {s.get('beta','?')}\n"
+            f"  Entrée recommandée : {s.get('entry','?')} MAD | "
+            f"Objectif 6M : {s.get('target','?')} MAD (+{s.get('upside_pct','?')}%)"
+        )
+
+    prompt = f"""Analyste financier BVC senior. Comparaison entre deux valeurs cotées :
+
+{fmt_s(s1)}
+
+{fmt_s(s2)}
+
+Rédige en français, style broker, avec puces et numérotation :
+
+## ⚔️ 1. Tableau Comparatif
+
+| Critère | {s1['ticker']} | {s2['ticker']} | Meilleur |
+|---|---|---|---|
+| Score opportunité | | | |
+| RSI (zone) | | | |
+| Signal MA | | | |
+| Tendance prix | | | |
+| PER | | | |
+| Rendement div. | | | |
+| Bêta (risque) | | | |
+| Position 52S | | | |
+| Nbre actions émises | | | |
+| Capitalisation | | | |
+
+## 🏆 2. Verdict — Laquelle Choisir ?
+1. **Gagnant**: [TICKER] — justification en 2 lignes
+2. **Profil risque**: compare les deux profils
+3. **Contexte favori** : dans quel scénario de marché chacune performe mieux
+
+## 👤 3. Profil Investisseur
+- **{s1['ticker']}** convient à : (type investisseur + horizon + tolérance risque)
+- **{s2['ticker']}** convient à : (type investisseur + horizon + tolérance risque)
+
+## 🧠 4. Résumé Flash (3 lignes max)
+Note finale : [TICKER 1] X/10 vs [TICKER 2] Y/10"""
+
+    client = get_client()
+    response = client.messages.create(
+        model="claude-haiku-4-5",
+        max_tokens=1400,
+        messages=[{"role": "user", "content": prompt}],
+        timeout=25,
+    )
+    return jsonify({"analysis": response.content[0].text})
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
