@@ -277,201 +277,152 @@ def fetch_drahmi_data(ticker):
 # ---------------------------------------------------------------------------
 def fetch_via_mcp(ticker):
     """
-    Tente de récupérer les données via le endpoint MCP SSE de Drahmi.
-    Protocol : GET /sse → event:endpoint → POST /messages → event:message
-    Utilisé en fallback si api.drahmi.app est bloqué par Cloudflare.
+    Récupère données + signaux via MCP SSE Drahmi hébergé.
+    Protocol : GET /sse → event:endpoint → POST /messages (202) → réponse via SSE.
+    Outils utilisés : drahmi_get_stock + drahmi_get_signals.
     """
-    key = os.environ.get("DRAHMI_API_KEY") or os.environ.get("trading_dashboard") or ""
+    key = os.environ.get("DRAHMI_API_KEY") or ""
     if not key:
         return None
 
-    mcp_base  = "https://mcp.drahmi.app"
-    sse_url   = f"{mcp_base}/sse"
-    req_hdrs  = {
-        "Authorization": f"Bearer {key}",
-        "Accept":        "text/event-stream",
-        "Cache-Control": "no-cache",
-    }
+    mcp_base = "https://mcp.drahmi.app"
+    hdrs_sse  = {"Authorization": f"Bearer {key}", "Accept": "text/event-stream"}
+    hdrs_post = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
 
-    # ── Étape 1 : connexion SSE, récupère l'URL /messages?sessionId=... ──────
-    messages_url = None
-    sse_queue    = queue.Queue()
-
-    def _sse_reader(sess, url):
-        """Lit le stream SSE dans un thread séparé."""
-        try:
-            with sess.get(url, headers=req_hdrs, params={"api_key": key},
-                          stream=True, timeout=12) as r:
-                if r.status_code != 200:
-                    sse_queue.put(("status_error", r.status_code, r.text[:200]))
-                    return
-                event_name = None
-                for raw in r.iter_lines(decode_unicode=True):
-                    sse_queue.put(("line", raw))
-                    # Signal d'arrêt posé par le thread principal
-                    if not sse_queue.empty():
-                        item = sse_queue.queue[0]
-                        if isinstance(item, tuple) and item[0] == "stop":
-                            return
-        except Exception as e:
-            sse_queue.put(("error", str(e)))
-
+    sse_q   = queue.Queue()
     session = http.Session()
-    t = threading.Thread(target=_sse_reader, args=(session, sse_url), daemon=True)
-    t.start()
 
-    # Attend l'événement endpoint (max 8 s)
-    current_event = None
-    deadline = 8
-    start = time.time()
-    while time.time() - start < deadline:
+    # ── Lecteur SSE persistant ────────────────────────────────────────────────
+    def _sse_reader():
         try:
-            item = sse_queue.get(timeout=1)
+            with session.get(f"{mcp_base}/sse", headers=hdrs_sse,
+                             stream=True, timeout=60) as r:
+                if r.status_code != 200:
+                    sse_q.put(("err", r.status_code))
+                    return
+                for raw in r.iter_lines(decode_unicode=True):
+                    sse_q.put(("line", raw))
+        except Exception as e:
+            sse_q.put(("err", str(e)))
+
+    threading.Thread(target=_sse_reader, daemon=True).start()
+
+    # ── Étape 1 : récupère l'URL /messages?session_id=... ────────────────────
+    messages_url = None
+    start = time.time()
+    while time.time() - start < 8:
+        try:
+            kind, val = sse_q.get(timeout=1)
         except queue.Empty:
             continue
-
-        if item[0] in ("status_error", "error"):
-            print(f"[MCP] SSE error: {item[1:]}")
+        if kind == "err":
+            print(f"[MCP] SSE error: {val}")
             return None
-
-        line = item[1]
-        if line.startswith("event:"):
-            current_event = line.split(":", 1)[1].strip()
-        elif line.startswith("data:"):
-            data_str = line.split(":", 1)[1].strip()
-            if current_event == "endpoint" or messages_url is None:
-                # L'URL peut être relative (/messages?sessionId=...) ou complète
-                if data_str.startswith("/"):
-                    messages_url = mcp_base + data_str
-                elif data_str.startswith("http"):
-                    messages_url = data_str
-                elif data_str.startswith("{"):
-                    try:
-                        d = json.loads(data_str)
-                        ep = d.get("endpoint") or d.get("url") or d.get("uri")
-                        if ep:
-                            messages_url = mcp_base + ep if ep.startswith("/") else ep
-                    except Exception:
-                        pass
-                if messages_url:
-                    break
+        if val.startswith("data:"):
+            ep = val[5:].strip()
+            if ep.startswith("/"):
+                messages_url = mcp_base + ep
+                break
 
     if not messages_url:
-        print(f"[MCP] Impossible d'obtenir l'URL messages")
+        print("[MCP] session_id non obtenu")
         return None
+    print(f"[MCP] session: {messages_url}")
 
-    print(f"[MCP] messages_url = {messages_url}")
-    post_hdrs = {
-        "Authorization": f"Bearer {key}",
-        "Content-Type":  "application/json",
-        "Accept":        "application/json, text/event-stream",
-    }
+    # ── Envoi JSON-RPC + lecture réponse SSE ─────────────────────────────────
+    def _rpc(method, params, rpc_id, timeout=12):
+        try:
+            session.post(messages_url, headers=hdrs_post, timeout=6,
+                         json={"jsonrpc": "2.0", "id": rpc_id,
+                               "method": method, "params": params})
+        except Exception as e:
+            print(f"[MCP] POST {method} error: {e}")
+            return None
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                kind, val = sse_q.get(timeout=0.5)
+                if kind == "err":
+                    return None
+                if val.startswith("data:"):
+                    try:
+                        d = json.loads(val[5:].strip())
+                        if d.get("id") == rpc_id:
+                            return d.get("result") or d.get("error")
+                    except Exception:
+                        pass
+            except queue.Empty:
+                pass
+        return None
 
     # ── Étape 2 : initialize ─────────────────────────────────────────────────
-    try:
-        init_payload = {
-            "jsonrpc": "2.0", "id": 1,
-            "method":  "initialize",
-            "params":  {
-                "protocolVersion": "2024-11-05",
-                "capabilities":    {},
-                "clientInfo":      {"name": "trading-dashboard", "version": "1.0"},
-            },
-        }
-        ri = session.post(messages_url, json=init_payload, headers=post_hdrs, timeout=8)
-        print(f"[MCP] initialize → {ri.status_code}")
-    except Exception as e:
-        print(f"[MCP] initialize error: {e}")
+    _rpc("initialize", {
+        "protocolVersion": "2024-11-05",
+        "capabilities": {},
+        "clientInfo": {"name": "trading-dashboard", "version": "1.0"},
+    }, rpc_id=0)
+    time.sleep(0.2)
+
+    # ── Étape 3 : drahmi_get_stock ───────────────────────────────────────────
+    stock_result = _rpc("tools/call",
+                        {"name": "drahmi_get_stock", "arguments": {"ticker": ticker}},
+                        rpc_id=1)
+    stock_data = None
+    if stock_result and not stock_result.get("isError"):
+        try:
+            content = stock_result.get("content", [])
+            raw = content[0]["text"] if content else ""
+            stock_data = json.loads(raw) if raw else None
+        except Exception:
+            pass
+
+    if not stock_data or not stock_data.get("price"):
+        print(f"[MCP] drahmi_get_stock sans prix pour {ticker}")
         return None
 
-    # ── Étape 3 : tools/call ─────────────────────────────────────────────────
-    # Essaie plusieurs noms de tools courants Drahmi
-    tool_candidates = [
-        ("get_stock_data",   {"ticker": ticker}),
-        ("getStock",         {"ticker": ticker}),
-        ("stock_info",       {"symbol": ticker}),
-        ("get_stock",        {"ticker": ticker}),
-        ("get_ticker_info",  {"ticker": ticker}),
-    ]
-
-    for tool_name, tool_args in tool_candidates:
+    # ── Étape 4 : drahmi_get_signals ─────────────────────────────────────────
+    signals = []
+    sig_result = _rpc("tools/call",
+                      {"name": "drahmi_get_signals",
+                       "arguments": {"ticker": ticker, "range": "3M"}},
+                      rpc_id=2)
+    if sig_result and not sig_result.get("isError"):
         try:
-            call_payload = {
-                "jsonrpc": "2.0", "id": 2,
-                "method":  "tools/call",
-                "params":  {"name": tool_name, "arguments": tool_args},
-            }
-            rc = session.post(messages_url, json=call_payload, headers=post_hdrs, timeout=10)
-            print(f"[MCP] tools/call {tool_name} → {rc.status_code}")
+            content = sig_result.get("content", [])
+            raw = content[0]["text"] if content else ""
+            sig_data = json.loads(raw) if raw else {}
+            signals = sig_data.get("signals", [])
+        except Exception:
+            pass
 
-            if rc.status_code == 200:
-                try:
-                    body = rc.json()
-                    # Cherche le résultat dans la réponse JSON-RPC
-                    result_data = body.get("result") or body
-                    content = result_data.get("content") if isinstance(result_data, dict) else None
-                    if content:
-                        # Parfois retourné comme liste de {type, text}
-                        if isinstance(content, list):
-                            for c in content:
-                                if c.get("type") == "text":
-                                    try:
-                                        parsed = json.loads(c["text"])
-                                        return _normalize_mcp_stock(parsed, ticker)
-                                    except Exception:
-                                        pass
-                        elif isinstance(content, dict):
-                            return _normalize_mcp_stock(content, ticker)
-                    # Parfois la donnée est directement dans result
-                    if isinstance(result_data, dict) and (
-                        result_data.get("price") or result_data.get("cours") or result_data.get("close")
-                    ):
-                        return _normalize_mcp_stock(result_data, ticker)
-                except Exception as e:
-                    print(f"[MCP] parse error: {e}")
-        except Exception as e:
-            print(f"[MCP] tools/call {tool_name} error: {e}")
-
-    # ── Étape 4 : si tools/call n'a rien donné, essaie tools/list ────────────
-    try:
-        list_payload = {"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}}
-        rl = session.post(messages_url, json=list_payload, headers=post_hdrs, timeout=8)
-        if rl.status_code == 200:
-            tools_body = rl.json()
-            tools = (tools_body.get("result") or {}).get("tools", [])
-            tool_names = [t.get("name") for t in tools]
-            print(f"[MCP] tools disponibles: {tool_names}")
-            # Persiste dans les logs pour debugging
-    except Exception as e:
-        print(f"[MCP] tools/list error: {e}")
-
-    return None
+    print(f"[MCP] {ticker} OK {stock_data['price']} MAD | {len(signals)} signaux")
+    return _normalize_mcp_stock(stock_data, signals, ticker)
 
 
-def _normalize_mcp_stock(d, ticker):
-    """Normalise la réponse MCP en format attendu par _format_data_for_claude."""
+def _normalize_mcp_stock(d, signals, ticker):
+    """Normalise la réponse drahmi_get_stock en format attendu par fetch_drahmi_data."""
     if not d:
         return None
-    # Champs possibles selon l'implémentation Drahmi
-    cours = (d.get("price") or d.get("cours") or d.get("close")
-             or d.get("lastPrice") or d.get("last_price"))
+    cours = d.get("price")
     if not cours:
         return None
     return {
-        "source":        "drahmi_mcp",
-        "ticker":        ticker,
-        "fetched_at":    datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
-        "cours":         float(cours),
-        "variation":     d.get("change") or d.get("variation") or d.get("changePercent"),
-        "volume":        d.get("volume") or d.get("volume24h"),
-        "capitalisation":d.get("marketCap") or d.get("capitalisation"),
-        "per":           d.get("peRatio") or d.get("per"),
-        "beta":          d.get("beta"),
-        "div_yield":     d.get("dividendYield") or d.get("div_yield"),
-        "week52_high":   d.get("week52High") or d.get("high52"),
-        "week52_low":    d.get("week52Low")  or d.get("low52"),
-        "name":          d.get("name") or d.get("companyName"),
-        "signals":       d.get("signals", []),
+        "source":         "drahmi_mcp",
+        "ticker":         ticker,
+        "fetched_at":     datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+        "name":           d.get("name"),
+        "cours":          float(cours),
+        "variation":      d.get("change"),
+        "volume":         d.get("volume_24h"),
+        "capitalisation": d.get("market_cap"),
+        "per":            d.get("pe_ratio"),
+        "beta":           d.get("beta"),
+        "div_yield":      d.get("dividend_yield"),
+        "week52_high":    d.get("week_52_high"),
+        "week52_low":     d.get("week_52_low"),
+        "isin":           d.get("isin"),
+        "sector_drahmi":  d.get("sector"),
+        "signals":        signals,
     }
 
 
