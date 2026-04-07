@@ -329,10 +329,36 @@ function buildPanel(s, side){
         <span class="metric-val">${maSigHtml(s.ma_signal)}</span>
       </div>
 
+      <!-- MACD -->
+      <div class="metric-row">
+        <span class="metric-lbl">MACD (hist.)</span>
+        <span class="metric-val">
+          ${s.macd_hist!=null
+            ? `<span style="${s.macd_hist>0?'color:#69f0ae':'color:#ff5252'}">${s.macd_hist>0?'▲':'▼'} ${s.macd_hist>=0?'+':''}${parseFloat(s.macd_hist).toFixed(4)}</span>`
+            : '—'}
+        </span>
+      </div>
+
       <!-- Tendance prix -->
       <div class="metric-row">
-        <span class="metric-lbl">Tendance prix</span>
-        <span class="metric-val">${trendHtml(s.trend)}</span>
+        <span class="metric-lbl">Tendance (3M)</span>
+        <span class="metric-val">${s.trend_api
+          ? `<span style="${s.trend_api==='bullish'?'color:#69f0ae':s.trend_api==='bearish'?'color:#ff5252':'color:#ffd600'}">${s.trend_api==='bullish'?'🟢 Haussière':s.trend_api==='bearish'?'🔴 Baissière':'🟡 Neutre'}</span>`
+          : trendHtml(s.trend)}</span>
+      </div>
+
+      <!-- Momentum -->
+      <div class="metric-row">
+        <span class="metric-lbl">Momentum</span>
+        <span class="metric-val">${s.momentum
+          ? `<span style="${s.momentum==='strong'?'color:#69f0ae':s.momentum==='moderate'?'color:#ffd600':'color:#78909c'}">${s.momentum==='strong'?'💪 Fort':s.momentum==='moderate'?'➡️ Modéré':'📉 Faible'}</span>`
+          : '—'}</span>
+      </div>
+
+      <!-- Volatilité -->
+      <div class="metric-row">
+        <span class="metric-lbl">Volatilité annuel.</span>
+        <span class="metric-val">${s.volatility!=null?`${fmt(s.volatility,1)}%`:'—'}</span>
       </div>
 
       <!-- 52 sem. range -->
@@ -392,15 +418,25 @@ function buildCmpTable(s1, s2){
     {label:'Score Opportunité',     v1:s1.score,          v2:s2.score,          fmt:(v)=>`${v}/100`,         higher:true,  color:true},
     {label:'RSI (14)',              v1:s1.rsi,             v2:s2.rsi,             fmt:(v)=>`${v}`,             higher:false, rsi:true},
     {label:'Signal MA',             v1:s1.ma_signal,       v2:s2.ma_signal,       fmt:(v)=>maSigHtml(v),       ma:true},
-    {label:'Tendance prix',         v1:s1.trend,           v2:s2.trend,           fmt:(v)=>trendHtml(v||'—'),  trend:true},
-    {label:'Position 52S (%)',      v1:s1.pos_52,          v2:s2.pos_52,          fmt:(v)=>v!=null?`${v}%`:'—', higher:false},
-    {label:'Actions émises',        v1:s1.shares_issued,   v2:s2.shares_issued,   fmt:(v)=>fmtN(v),            higher:false, neutral:true},
-    {label:'Capitalisation',        v1:s1.capitalisation,  v2:s2.capitalisation,  fmt:(v)=>v?fmt(v/1e6,0)+' M MAD':'—', higher:true, neutral:true},
-    {label:'PER',                   v1:s1.per,             v2:s2.per,             fmt:(v)=>v?`${fmt(v,1)}x`:'—', higher:false},
-    {label:'Rendement Dividende',   v1:s1.div_yield,       v2:s2.div_yield,       fmt:(v)=>`${fmt(v,1)}%`,     higher:true},
-    {label:'Bêta (risque)',         v1:s1.beta,            v2:s2.beta,            fmt:(v)=>v?fmt(v,2):'—',     higher:false},
-    {label:'Potentiel 6M (%)',      v1:s1.upside_pct,      v2:s2.upside_pct,      fmt:(v)=>`+${v}%`,           higher:true, color:true},
-    {label:'Entrée recommandée',    v1:s1.entry,           v2:s2.entry,           fmt:(v)=>`${fmt(v,1)} MAD`,  higher:false, neutral:true},
+    {label:'Tendance (3M)',          v1:s1.trend_api,       v2:s2.trend_api,
+     fmt:(v)=>v?`<span style="${v==='bullish'?'color:#69f0ae':v==='bearish'?'color:#ff5252':'color:#ffd600'}">${v==='bullish'?'🟢 Haussier':v==='bearish'?'🔴 Baissier':'🟡 Neutre'}</span>`
+               :(s1.trend||'—'),
+     trendApi:true},
+    {label:'Momentum',               v1:s1.momentum,        v2:s2.momentum,
+     fmt:(v)=>v?`<span style="${v==='strong'?'color:#69f0ae':v==='moderate'?'color:#ffd600':'color:#78909c'}">${v==='strong'?'💪 Fort':v==='moderate'?'➡️ Modéré':'📉 Faible'}</span>`:'—',
+     momRank:true},
+    {label:'MACD (hist.)',           v1:s1.macd_hist,       v2:s2.macd_hist,
+     fmt:(v)=>v!=null?`<span style="${v>0?'color:#69f0ae':'color:#ff5252'}">${v>0?'▲':'▼'} ${v>=0?'+':''}${parseFloat(v).toFixed(3)}</span>`:'—',
+     higher:true},
+    {label:'Volatilité annualisée',  v1:s1.volatility,      v2:s2.volatility,      fmt:(v)=>v!=null?`${fmt(v,1)}%`:'—', higher:false},
+    {label:'Position 52S (%)',       v1:s1.pos_52,          v2:s2.pos_52,          fmt:(v)=>v!=null?`${v}%`:'—', higher:false},
+    {label:'Actions émises',         v1:s1.shares_issued,   v2:s2.shares_issued,   fmt:(v)=>fmtN(v),            higher:false, neutral:true},
+    {label:'Capitalisation',         v1:s1.capitalisation,  v2:s2.capitalisation,  fmt:(v)=>v?fmt(v/1e6,0)+' M MAD':'—', higher:true, neutral:true},
+    {label:'PER',                    v1:s1.per,             v2:s2.per,             fmt:(v)=>v?`${fmt(v,1)}x`:'—', higher:false},
+    {label:'Rendement Dividende',    v1:s1.div_yield,       v2:s2.div_yield,       fmt:(v)=>`${fmt(v,1)}%`,     higher:true},
+    {label:'Bêta (risque)',          v1:s1.beta,            v2:s2.beta,            fmt:(v)=>v?fmt(v,2):'—',     higher:false},
+    {label:'Potentiel 6M (%)',       v1:s1.upside_pct,      v2:s2.upside_pct,      fmt:(v)=>`+${v}%`,           higher:true, color:true},
+    {label:'Entrée recommandée',     v1:s1.entry,           v2:s2.entry,           fmt:(v)=>`${fmt(v,1)} MAD`,  higher:false, neutral:true},
   ];
 
   let html = `<thead><tr>
@@ -416,6 +452,12 @@ function buildCmpTable(s1, s2){
       if(row.ma){
         const rank={bullish:2,neutral:1,bearish:0};
         winner=rank[row.v1]>rank[row.v2]?'s1':rank[row.v2]>rank[row.v1]?'s2':'draw';
+      } else if(row.trendApi){
+        const rank={bullish:2,neutral:1,bearish:0};
+        winner=rank[row.v1]>rank[row.v2]?'s1':rank[row.v2]>rank[row.v1]?'s2':'draw';
+      } else if(row.momRank){
+        const rank={strong:2,moderate:1,weak:0};
+        winner=(rank[row.v1]||0)>(rank[row.v2]||0)?'s1':(rank[row.v2]||0)>(rank[row.v1]||0)?'s2':'draw';
       } else if(row.trend){
         const rank={'🟢 Haussière':2,'🟡 Neutre':1,'🔴 Baissière':0};
         winner=rank[row.v1]>rank[row.v2]?'s1':rank[row.v2]>rank[row.v1]?'s2':'draw';
@@ -451,11 +493,11 @@ function buildCmpTable(s1, s2){
 // ─── Radar chart ─────────────────────────────────────────────────────────────
 function buildRadar(s1, s2){
   if(_radarChart){ _radarChart.destroy(); _radarChart=null; }
-  const labels=['Score\nopp.','RSI\n(zone)','PER\n(val.)','Dividende','Support\n52S','Signal\nMA','Momentum'];
+  const labels=['Score\nopp.','RSI\n(zone)','PER\n(val.)','Dividende','Support\n52S','Signal\nMA','Stabilité'];
   const r1 = s1.radar||{};
   const r2 = s2.radar||{};
-  const d1 = [r1.score,r1.rsi,r1.per,r1.div,r1.support,r1.ma,r1.momentum].map(v=>v||0);
-  const d2 = [r2.score,r2.rsi,r2.per,r2.div,r2.support,r2.ma,r2.momentum].map(v=>v||0);
+  const d1 = [r1.score,r1.rsi,r1.per,r1.div,r1.support,r1.ma,r1.stabilite??r1.momentum??50].map(v=>v||0);
+  const d2 = [r2.score,r2.rsi,r2.per,r2.div,r2.support,r2.ma,r2.stabilite??r2.momentum??50].map(v=>v||0);
 
   _radarChart = new Chart(document.getElementById('radarChart'),{
     type:'radar',

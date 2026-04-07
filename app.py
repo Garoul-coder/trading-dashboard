@@ -259,6 +259,42 @@ def fetch_drahmi_data(ticker):
     except Exception as e:
         print(f"[DRAHMI] {ticker} signals ERROR: {e}")
 
+    # ── Appel 3 : indicateurs techniques (RSI, MACD, BB) ─────────────────────
+    try:
+        r3 = http.get(
+            f"{DRAHMI_BASE}/intelligence/stocks/{ticker}/technicals",
+            headers=headers, params={"range": "1M"}, timeout=8,
+        )
+        if r3.status_code == 200:
+            t_raw = r3.json()
+            pts = (t_raw.get("data") or {}).get("points") or t_raw.get("points") or []
+            if pts:
+                result.update(_extract_latest_technicals(pts))
+                print(f"[DRAHMI] {ticker} technicals → RSI={result.get('rsi')}")
+    except Exception as e:
+        print(f"[DRAHMI] {ticker} technicals ERROR: {e}")
+
+    # ── Appel 4 : analyse de marché (trend, momentum, volatilité) ─────────────
+    try:
+        r4 = http.get(
+            f"{DRAHMI_BASE}/intelligence/stocks/{ticker}/analysis",
+            headers=headers, params={"range": "3M"}, timeout=8,
+        )
+        if r4.status_code == 200:
+            an = r4.json()
+            result.update({
+                "trend":         an.get("trend"),
+                "momentum":      an.get("momentum"),
+                "volatility":    an.get("volatility"),
+                "max_drawdown":  an.get("maxDrawdown"),
+                "relative_perf": an.get("relativePerformance"),
+                "beta":          an.get("beta") or result.get("beta"),
+                "risk_level":    an.get("riskLevel"),
+            })
+            print(f"[DRAHMI] {ticker} analysis → trend={result.get('trend')} vol={result.get('volatility')}")
+    except Exception as e:
+        print(f"[DRAHMI] {ticker} analysis ERROR: {e}")
+
     # ── Fallback MCP si REST bloqué (Cloudflare) ─────────────────────────────
     if not result.get("cours"):
         print(f"[DRAHMI] REST sans cours pour {ticker} — tentative MCP fallback")
@@ -395,8 +431,51 @@ def fetch_via_mcp(ticker):
         except Exception:
             pass
 
+    # ── Étape 5 : drahmi_get_technicals ──────────────────────────────────────
+    tech_extras = {}
+    tech_result = _rpc("tools/call",
+                       {"name": "drahmi_get_technicals",
+                        "arguments": {"ticker": ticker, "range": "1M"}},
+                       rpc_id=3)
+    if tech_result and not tech_result.get("isError"):
+        try:
+            content = tech_result.get("content", [])
+            raw = content[0]["text"] if content else ""
+            t_raw = json.loads(raw) if raw else {}
+            pts = (t_raw.get("data") or {}).get("points") or t_raw.get("points") or []
+            tech_extras = _extract_latest_technicals(pts)
+        except Exception:
+            pass
+
+    # ── Étape 6 : drahmi_get_market_analysis ─────────────────────────────────
+    an_extras = {}
+    an_result = _rpc("tools/call",
+                     {"name": "drahmi_get_market_analysis",
+                      "arguments": {"ticker": ticker, "range": "3M"}},
+                     rpc_id=4)
+    if an_result and not an_result.get("isError"):
+        try:
+            content = an_result.get("content", [])
+            raw = content[0]["text"] if content else ""
+            an = json.loads(raw) if raw else {}
+            an_extras = {
+                "trend":         an.get("trend"),
+                "momentum":      an.get("momentum"),
+                "volatility":    an.get("volatility"),
+                "max_drawdown":  an.get("maxDrawdown"),
+                "relative_perf": an.get("relativePerformance"),
+                "beta":          an.get("beta"),
+                "risk_level":    an.get("riskLevel"),
+            }
+        except Exception:
+            pass
+
     print(f"[MCP] {ticker} OK {stock_data['price']} MAD | {len(signals)} signaux")
-    return _normalize_mcp_stock(stock_data, signals, ticker)
+    normalized = _normalize_mcp_stock(stock_data, signals, ticker)
+    if normalized:
+        normalized.update({k: v for k, v in tech_extras.items() if v is not None})
+        normalized.update({k: v for k, v in an_extras.items() if v is not None})
+    return normalized
 
 
 def _normalize_mcp_stock(d, signals, ticker):
@@ -469,6 +548,29 @@ def _format_data_for_claude(ticker, sd):
             status = "✅ DÉCLENCHÉ" if s.get("triggered") else "⬜ non déclenché"
             lines.append(f"  [{status}] {s.get('name')} — {s.get('why', '')}")
 
+    # Indicateurs techniques directs
+    tech_lines = []
+    if sd.get("rsi") is not None:
+        tech_lines.append(f"  RSI(14)          : {sd['rsi']:.2f}  [{_rsi_label(sd['rsi'])}]")
+    if sd.get("macd") is not None:
+        hist = sd.get("macd_hist", 0)
+        direction = "hausse" if hist > 0 else "baisse"
+        tech_lines.append(f"  MACD             : {sd['macd']:.4f} | Signal: {sd.get('macd_signal',0):.4f} | Hist: {hist:+.4f} ({direction})")
+    if sd.get("sma20"):
+        tech_lines.append(f"  SMA20 / EMA20    : {sd['sma20']:.2f} / {sd.get('ema20',0):.2f} MAD")
+    if sd.get("bb_upper"):
+        tech_lines.append(f"  Bollinger 20     : [{sd.get('bb_lower',0):.2f} — {sd['bb_upper']:.2f}] mid {sd.get('bb_mid',0):.2f}")
+    if sd.get("trend"):
+        tech_lines.append(f"  Tendance (3M)    : {sd['trend']} | Momentum : {sd.get('momentum','—')}")
+    if sd.get("volatility"):
+        tech_lines.append(f"  Volatilité annuel: {sd['volatility']:.2f}% | Drawdown max : {sd.get('max_drawdown',0):.2f}%")
+    if sd.get("relative_perf") is not None:
+        tech_lines.append(f"  Perf vs MASI(3M) : {sd['relative_perf']:+.2f}%")
+
+    if tech_lines:
+        lines.append("\nIndicateurs techniques :")
+        lines.extend(tech_lines)
+
     return "\n".join(lines)
 
 
@@ -538,8 +640,9 @@ Structure OBLIGATOIRE (7 sections, utilise puces "- " et numérotation "1. 2. 3.
   2. [risque 2]
 
 ## 📈 3. Analyse technique
-- Tendance court terme (basée sur signaux fournis)
-- Tendance moyen terme
+- RSI(14) : {sd.get('rsi', '—')} — zone {_rsi_label(sd.get('rsi') if sd.get('rsi') is not None else 50)}
+- MACD : tendance {('haussière' if sd.get('macd_hist', 0) > 0 else 'baissière') if sd.get('macd_hist') is not None else 'N/D'} (hist={sd.get('macd_hist','—')})
+- Position vs SMA20/EMA20 et bandes de Bollinger
 - Supports / Résistances clés (MAD) déduits du cours et 52S
 - Configuration graphique actuelle
 
@@ -802,6 +905,33 @@ def _rsi_label(rsi: float) -> str:
     return "Surachat"
 
 
+def _extract_latest_technicals(points):
+    """Extrait les dernières valeurs non-null de RSI, MACD, BB, SMA/EMA."""
+    out = {}
+    if not points:
+        return out
+    for p in reversed(points):
+        if "rsi" not in out and p.get("rsi14") is not None:
+            out["rsi"]  = round(float(p["rsi14"]), 2)
+        if "macd" not in out and p.get("macd") is not None:
+            out["macd"]        = round(float(p.get("macd") or 0), 4)
+            out["macd_signal"] = round(float(p.get("macd_signal") or 0), 4)
+            out["macd_hist"]   = round(float(p.get("macd_hist") or 0), 4)
+        if "sma20" not in out and p.get("sma20") is not None:
+            out["sma20"] = round(float(p["sma20"]), 2)
+        if "ema20" not in out and p.get("ema20") is not None:
+            out["ema20"] = round(float(p["ema20"]), 2)
+        if "bb_upper" not in out and p.get("bb_upper20") is not None:
+            out["bb_upper"] = round(float(p["bb_upper20"]), 2)
+            out["bb_lower"] = round(float(p.get("bb_lower20") or 0), 2)
+            out["bb_mid"]   = round(float(p.get("bb_mid20") or 0), 2)
+        if "atr" not in out and p.get("atr14") is not None:
+            out["atr"] = round(float(p["atr14"]), 4)
+        if len(out) >= 9:
+            break
+    return out
+
+
 # ── Fetch complet ticker (2 appels : prix + signaux) ─────────────────────────
 
 _quota_exceeded = False   # flag global : stoppe le scan si 429 détecté
@@ -860,6 +990,23 @@ def _fetch_ticker_full(ticker: str) -> dict | None:
     except Exception as e:
         print(f"[SCAN] {ticker} signals: {e}")
 
+    # ── Appel 3 : indicateurs techniques (optionnel, si quota ok) ─────────────
+    if not _quota_exceeded:
+        try:
+            r3 = http.get(
+                f"{DRAHMI_BASE}/intelligence/stocks/{ticker}/technicals",
+                headers=headers, params={"range": "1M"}, timeout=8,
+            )
+            if r3.status_code == 429:
+                _quota_exceeded = True
+            elif r3.status_code == 200:
+                t_raw = r3.json()
+                pts = (t_raw.get("data") or {}).get("points") or t_raw.get("points") or []
+                if pts:
+                    result.update(_extract_latest_technicals(pts))
+        except Exception as e:
+            print(f"[SCAN] {ticker} technicals: {e}")
+
     return result
 
 
@@ -913,7 +1060,7 @@ def compute_opportunity_score(sd: dict, sector_sentiment: float = 0) -> tuple:
             reasons.append(f"Rebond possible +{upside:.0f}% vers 52S haut")
 
     # RSI
-    rsi = _parse_rsi_from_signals(signals) or _approx_rsi(pos_52, var)
+    rsi = (sd.get("rsi") or _parse_rsi_from_signals(signals) or _approx_rsi(pos_52, var))
     ma_sig = _parse_ma_signal(signals)
 
     if 40 <= rsi <= 60:
@@ -945,6 +1092,29 @@ def compute_opportunity_score(sd: dict, sector_sentiment: float = 0) -> tuple:
     elif len(triggered) == 1:
         score += 8
         reasons.append(f"Signal actif : {triggered[0].get('name','')}")
+
+    # MACD confirmation
+    macd_hist = float(sd.get("macd_hist") or 0)
+    if macd_hist > 0 and ma_sig != "bearish":
+        score += 5
+        reasons.append(f"MACD haussier (hist={macd_hist:+.4f})")
+    elif macd_hist < 0 and ma_sig == "bullish":
+        score -= 3  # contradiction
+
+    # Trend / Momentum API
+    api_trend = sd.get("trend", "")
+    api_mom   = sd.get("momentum", "")
+    if api_trend == "bullish":
+        score += 5
+        reasons.append("Tendance API : haussière")
+    elif api_trend == "bearish":
+        score -= 5
+    if api_mom == "strong":
+        score += 3
+    elif api_mom == "moderate":
+        score += 1
+
+    score = max(0, min(100, score))
 
     # Momentum séance
     if -1.5 <= var < 0:
@@ -1221,6 +1391,9 @@ def analyse_opportunites():
             f"({r.get('variation', 0):+.1f}%) | Score={r['score']}/100 | "
             f"RSI={r.get('rsi','—')} ({r.get('rsi_label','')}) | "
             f"MA={r.get('ma_signal','neutral')} | "
+            f"MACD_hist={r.get('macd_hist','—')} | "
+            f"Trend={r.get('trend_api') or r.get('trend','—')} | Mom={r.get('momentum','—')} | "
+            f"Vol={r.get('volatility','—')}% | "
             f"Entrée={r.get('entry','—')} MAD | Objectif={r.get('target','—')} MAD (+{r.get('upside_pct','—')}%) | "
             f"Div={r.get('div_yield', 0):.1f}% | PER={r.get('per') or '—'} | "
             f"52S [{l}–{h}] | [{'; '.join(r.get('reasons', [])[:2])}]"
@@ -1305,11 +1478,12 @@ def _enrich_stock(sd: dict) -> dict:
     if h52 and l52 and float(h52) > float(l52):
         pos_52 = round((cours - float(l52)) / (float(h52) - float(l52)) * 100, 1)
 
-    # Tendance du prix
+    # Tendance du prix — préfère la donnée API si disponible
+    trend_api = sd.get("trend", "")   # raw API: "bullish"/"bearish"/"neutral"
     var = float(sd.get("variation") or 0)
-    if ma_sig == "bullish" and var > 0:
+    if trend_api == "bullish" or (ma_sig == "bullish" and var > 0):
         trend = "🟢 Haussière"
-    elif ma_sig == "bearish" or var < -2:
+    elif trend_api == "bearish" or ma_sig == "bearish" or var < -2:
         trend = "🔴 Baissière"
     else:
         trend = "🟡 Neutre"
@@ -1323,7 +1497,11 @@ def _enrich_stock(sd: dict) -> dict:
     div_radar  = min(100, float(sd.get("div_yield") or 0) * 12)  # 8%+ = 100
     pos_radar  = max(0, 100 - (pos_52 or 50))                # proche du bas = 100
     ma_radar   = 100 if ma_sig == "bullish" else 50 if ma_sig == "neutral" else 10
-    mom_radar  = max(0, min(100, (var + 5) * 10))            # -5% = 0, +5% = 100
+    vol = float(sd.get("volatility") or 0)
+    stab_radar = max(0, min(100, max(0, 50 - vol) * 2)) if vol else 50  # low vol = good
+    mom_raw = sd.get("momentum", "")
+    mom_radar = 80 if mom_raw == "strong" else 50 if mom_raw == "moderate" else (
+        max(0, min(100, (var + 5) * 10)))  # fallback to variation
 
     sd.update({
         "score":         score,
@@ -1339,15 +1517,27 @@ def _enrich_stock(sd: dict) -> dict:
                           else "NEUTRE"),
         "shares_issued": shares_issued,
         "pos_52":        pos_52,
-        "trend":         trend,
+        "trend":         trend,         # emoji display: "🟢 Haussière" etc.
+        "trend_api":     trend_api,    # raw API value: "bullish"/"bearish"/"neutral"
+        "volatility":    sd.get("volatility"),
+        "max_drawdown":  sd.get("max_drawdown"),
+        "macd_hist":     sd.get("macd_hist"),
+        "macd":          sd.get("macd"),
+        "macd_signal":   sd.get("macd_signal"),
+        "sma20":         sd.get("sma20"),
+        "ema20":         sd.get("ema20"),
+        "bb_upper":      sd.get("bb_upper"),
+        "bb_lower":      sd.get("bb_lower"),
+        "relative_perf": sd.get("relative_perf"),
+        "risk_level":    sd.get("risk_level"),
         "radar": {
-            "score":   score,
-            "rsi":     round(rsi_radar, 1),
-            "per":     round(per_radar, 1),
-            "div":     round(div_radar, 1),
-            "support": round(pos_radar, 1),
-            "ma":      ma_radar,
-            "momentum":round(mom_radar, 1),
+            "score":     score,
+            "rsi":       round(rsi_radar, 1),
+            "per":       round(per_radar, 1),
+            "div":       round(div_radar, 1),
+            "support":   round(pos_radar, 1),
+            "ma":        ma_radar,
+            "stabilite": round(stab_radar, 1),  # renamed from "momentum"
         },
     })
     return sd

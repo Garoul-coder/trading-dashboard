@@ -357,14 +357,19 @@ function renderOppCard(r, rank){
           ${rsiHtml(r.rsi, r.rsi_label)}
         </div>
         <div style="flex:1">
-          <div class="text-secondary" style="font-size:.62rem;letter-spacing:.05em;margin-bottom:.25rem">Signal MA</div>
+          <div class="text-secondary" style="font-size:.62rem;letter-spacing:.05em;margin-bottom:.25rem">Signal MA / MACD</div>
           ${maSigHtml(r.ma_signal)}
-          ${r.div_yield>0?`<div class="text-warning" style="font-size:.7rem;margin-top:.15rem"><i class="bi bi-coin me-1"></i>${fmt(r.div_yield,1)}%</div>`:''}
+          ${r.macd_hist!=null?`<div style="font-size:.68rem;margin-top:.12rem;${r.macd_hist>0?'color:#69f0ae':'color:#ff5252'}">
+            MACD ${r.macd_hist>0?'▲':'▼'} ${r.macd_hist>=0?'+':''}${parseFloat(r.macd_hist).toFixed(3)}</div>`:''}
+          ${r.div_yield>0?`<div class="text-warning" style="font-size:.7rem;margin-top:.12rem"><i class="bi bi-coin me-1"></i>${fmt(r.div_yield,1)}%</div>`:''}
         </div>
         <div class="text-end" style="flex:0.8">
-          <div class="text-secondary" style="font-size:.62rem;letter-spacing:.05em;margin-bottom:.2rem">PER</div>
+          <div class="text-secondary" style="font-size:.62rem;letter-spacing:.05em;margin-bottom:.2rem">PER / Tendance</div>
           <div class="fw-semibold" style="font-size:.85rem">${r.per?`${fmt(r.per,1)}x`:'—'}</div>
-          ${r.beta?`<div class="text-secondary" style="font-size:.68rem">β ${fmt(r.beta,2)}</div>`:''}
+          ${r.trend?`<div style="font-size:.68rem;margin-top:.1rem;${r.trend==='bullish'?'color:#69f0ae':r.trend==='bearish'?'color:#ff5252':'color:#ffd600'}">
+            ${r.trend==='bullish'?'🟢 Haussier':r.trend==='bearish'?'🔴 Baissier':'🟡 Neutre'}</div>`
+            :r.beta?`<div class="text-secondary" style="font-size:.68rem">β ${fmt(r.beta,2)}</div>`:''}
+          ${r.volatility?`<div class="text-secondary" style="font-size:.65rem">Vol. ${fmt(r.volatility,1)}%</div>`:''}
         </div>
       </div>
 
@@ -443,6 +448,10 @@ function renderSectorCard(sec, data){
       <td class="text-center">${varHtml(r.variation)}</td>
       <td class="text-center"><span class="rsi-val ${r.rsi_label==='Survente'?'rsi-oversold':r.rsi_label==='Bas'?'rsi-low':r.rsi_label==='Haut'?'rsi-high':r.rsi_label==='Surachat'?'rsi-overbought':'rsi-neutral'}" style="font-size:.8rem">${r.rsi||'—'}</span></td>
       <td class="text-center">${maSigHtml(r.ma_signal)}</td>
+      <td class="text-center" style="font-size:.75rem;${r.macd_hist!=null?(r.macd_hist>0?'color:#69f0ae':'color:#ff5252'):'color:#607d8b'}">
+        ${r.macd_hist!=null?(r.macd_hist>0?'▲':'▼')+parseFloat(r.macd_hist).toFixed(2):'—'}</td>
+      <td class="text-center" style="font-size:.73rem;${(r.trend_api||r.trend)==='bullish'||(r.trend||'').includes('Haussière')?'color:#69f0ae':(r.trend_api||r.trend)==='bearish'||(r.trend||'').includes('Baissière')?'color:#ff5252':'color:#607d8b'}">
+        ${(r.trend_api==='bullish'||(r.trend||'').includes('Haussière'))?'🟢':(r.trend_api==='bearish'||(r.trend||'').includes('Baissière'))?'🔴':r.trend_api||r.trend?'🟡':'—'}</td>
       <td class="text-center">${sigBadge(r.signal)}</td>
       <td class="text-center fw-bold" style="color:${scoreColor(r.score)}">${r.score}</td>
     </tr>`).join('');
@@ -471,6 +480,7 @@ function renderSectorCard(sec, data){
             <tr style="font-size:.68rem;color:#607d8b">
               <th>Ticker</th><th class="text-center">Cours</th><th class="text-center">Var.</th>
               <th class="text-center">RSI</th><th class="text-center">MA</th>
+              <th class="text-center">MACD</th><th class="text-center">Tend.</th>
               <th class="text-center">Signal</th><th class="text-center">Score</th>
             </tr>
           </thead>

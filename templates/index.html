@@ -100,6 +100,28 @@
     }
     .rsi-bar { height: 8px; border-radius: 4px; background: linear-gradient(to right, #2196f3, #4caf50, #ff9800, #f44336); }
     .rsi-indicator { width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 2px solid #333; position: relative; top: -11px; transition: left .5s; }
+    /* Technical indicators card */
+    .tech-card { background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.07); border-radius: 12px; padding: 1rem 1.2rem; }
+    .tech-row { display: flex; align-items: center; justify-content: space-between; padding: .35rem 0; border-bottom: 1px solid rgba(255,255,255,.04); }
+    .tech-row:last-child { border-bottom: none; }
+    .tech-lbl { color: #8899aa; font-size: .75rem; letter-spacing: .04em; }
+    .tech-val { font-size: .82rem; font-weight: 600; }
+    .rsi-pill { display: inline-block; padding: .15rem .5rem; border-radius: 20px; font-size: .78rem; font-weight: 700; }
+    .rsi-pill.survente  { background: rgba(33,150,243,.18); color: #42a5f5; }
+    .rsi-pill.bas       { background: rgba(76,175,80,.18);  color: #66bb6a; }
+    .rsi-pill.neutre    { background: rgba(255,255,255,.1); color: #cfd8dc; }
+    .rsi-pill.haut      { background: rgba(255,152,0,.18);  color: #ffa726; }
+    .rsi-pill.surachat  { background: rgba(244,67,54,.18);  color: #ef5350; }
+    .macd-bull { color: #69f0ae; }
+    .macd-bear { color: #ff5252; }
+    .trend-api-bull { color: #69f0ae; font-weight: 700; }
+    .trend-api-bear { color: #ff5252; font-weight: 700; }
+    .trend-api-neut { color: #ffd600; }
+    .mom-strong  { color: #69f0ae; }
+    .mom-moderate{ color: #ffd600; }
+    .mom-weak    { color: #78909c; }
+    .rsi-mini-track { height: 5px; background: linear-gradient(to right,#42a5f5,#66bb6a,#ffa726,#ef5350); border-radius: 3px; position: relative; margin-top: .25rem; }
+    .rsi-mini-dot { width: 9px; height: 9px; background: #fff; border: 1.5px solid #333; border-radius: 50%; position: absolute; top: -2px; transform: translateX(-50%); transition: left .5s; }
     .chart-wrapper { position: relative; height: 220px; }
     .popular-tickers .badge { cursor: pointer; font-size: .85rem; padding: .4rem .8rem; }
     .popular-tickers .badge:hover { opacity: .85; }
@@ -327,6 +349,60 @@
       <div class="chart-wrapper"><canvas id="priceChart"></canvas></div>
     </div>
 
+    <!-- Technical Indicators Card -->
+    <div id="techCard" class="tech-card mb-4" style="display:none;">
+      <div class="section-header mb-3"><i class="bi bi-activity me-1"></i>INDICATEURS TECHNIQUES</div>
+      <div class="row g-3">
+        <!-- col RSI / MACD -->
+        <div class="col-12 col-md-6">
+          <div class="tech-row">
+            <span class="tech-lbl">RSI (14)</span>
+            <div class="text-end">
+              <span id="tRsiPill" class="rsi-pill neutre">—</span>
+              <div id="tRsiTrack" class="rsi-mini-track mt-1" style="width:120px;display:inline-block">
+                <div id="tRsiDot" class="rsi-mini-dot" style="left:50%"></div>
+              </div>
+            </div>
+          </div>
+          <div class="tech-row">
+            <span class="tech-lbl">MACD (hist.)</span>
+            <span class="tech-val" id="tMacd">—</span>
+          </div>
+          <div class="tech-row">
+            <span class="tech-lbl">SMA20 / EMA20</span>
+            <span class="tech-val" id="tMa20">—</span>
+          </div>
+          <div class="tech-row">
+            <span class="tech-lbl">Bollinger (20)</span>
+            <span class="tech-val" id="tBb" style="font-size:.76rem">—</span>
+          </div>
+        </div>
+        <!-- col Analyse -->
+        <div class="col-12 col-md-6">
+          <div class="tech-row">
+            <span class="tech-lbl">Tendance (3M)</span>
+            <span class="tech-val" id="tTrend">—</span>
+          </div>
+          <div class="tech-row">
+            <span class="tech-lbl">Momentum</span>
+            <span class="tech-val" id="tMomentum">—</span>
+          </div>
+          <div class="tech-row">
+            <span class="tech-lbl">Volatilité annualisée</span>
+            <span class="tech-val" id="tVol">—</span>
+          </div>
+          <div class="tech-row">
+            <span class="tech-lbl">Drawdown max (3M)</span>
+            <span class="tech-val" id="tDrawdown">—</span>
+          </div>
+          <div class="tech-row">
+            <span class="tech-lbl">Perf. relative MASI (3M)</span>
+            <span class="tech-val" id="tRelPerf">—</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- AI Analysis -->
     <div id="analysisContainer"></div>
 
@@ -452,7 +528,80 @@ function renderResults(data) {
     document.getElementById('chartCard').style.display = 'none';
   }
 
-  // Analysis — render full markdown properly
+  // ── Technical indicators card ────────────────────────────────────────────
+  const hasAny = sd && (sd.rsi != null || sd.trend || sd.volatility != null);
+  if (hasAny) {
+    // RSI pill
+    const rsi = sd.rsi;
+    const rsiLabel = rsi < 30 ? 'Survente' : rsi < 40 ? 'Bas' : rsi <= 60 ? 'Neutre' : rsi <= 70 ? 'Haut' : 'Surachat';
+    const rsiCls   = rsiLabel.toLowerCase().replace('é','e');
+    const rsiPill  = document.getElementById('tRsiPill');
+    rsiPill.textContent = rsi != null ? `${fmt(rsi)} — ${rsiLabel}` : '—';
+    rsiPill.className  = `rsi-pill ${rsiCls}`;
+    document.getElementById('tRsiDot').style.left = rsi != null ? `${Math.min(100,Math.max(0,rsi))}%` : '50%';
+
+    // MACD
+    const hist = sd.macd_hist;
+    const macdEl = document.getElementById('tMacd');
+    if (hist != null) {
+      const dir = hist > 0 ? 'macd-bull' : 'macd-bear';
+      const arrow = hist > 0 ? '▲' : '▼';
+      macdEl.innerHTML = `<span class="${dir}">${arrow} ${hist >= 0 ? '+' : ''}${fmt(hist, 4)}</span>
+        <span class="text-secondary ms-2" style="font-size:.7rem">MACD ${fmt(sd.macd,4)} / Sig ${fmt(sd.macd_signal,4)}</span>`;
+    } else { macdEl.textContent = '—'; }
+
+    // SMA20 / EMA20
+    const ma20El = document.getElementById('tMa20');
+    if (sd.sma20 || sd.ema20) {
+      ma20El.textContent = `${sd.sma20 ? fmt(sd.sma20) : '—'} / ${sd.ema20 ? fmt(sd.ema20) : '—'} MAD`;
+      if (sd.cours && sd.ema20) {
+        const abv = sd.cours > sd.ema20;
+        ma20El.innerHTML += ` <span class="${abv?'text-success':'text-danger'}" style="font-size:.7rem">(${abv?'au-dessus':'en-dessous'})</span>`;
+      }
+    } else { ma20El.textContent = '—'; }
+
+    // Bollinger
+    const bbEl = document.getElementById('tBb');
+    if (sd.bb_upper && sd.bb_lower) {
+      const pos = sd.cours ? (sd.cours > sd.bb_upper ? '🔴 sur résistance' : sd.cours < sd.bb_lower ? '🟢 sur support' : '⬜ dans la bande') : '';
+      bbEl.textContent = `[${fmt(sd.bb_lower,1)} — ${fmt(sd.bb_upper,1)}] ${pos}`;
+    } else { bbEl.textContent = '—'; }
+
+    // Tendance
+    const trendEl = document.getElementById('tTrend');
+    if (sd.trend) {
+      const tc = sd.trend==='bullish'?'trend-api-bull':sd.trend==='bearish'?'trend-api-bear':'trend-api-neut';
+      const tIcon = sd.trend==='bullish'?'🟢':sd.trend==='bearish'?'🔴':'🟡';
+      trendEl.innerHTML = `<span class="${tc}">${tIcon} ${sd.trend.charAt(0).toUpperCase()+sd.trend.slice(1)}</span>`;
+    } else { trendEl.textContent = '—'; }
+
+    // Momentum
+    const momEl = document.getElementById('tMomentum');
+    if (sd.momentum) {
+      const mc = sd.momentum==='strong'?'mom-strong':sd.momentum==='moderate'?'mom-moderate':'mom-weak';
+      const mIcon = sd.momentum==='strong'?'💪':sd.momentum==='moderate'?'➡️':'📉';
+      momEl.innerHTML = `<span class="${mc}">${mIcon} ${sd.momentum.charAt(0).toUpperCase()+sd.momentum.slice(1)}</span>`;
+    } else { momEl.textContent = '—'; }
+
+    // Volatilité
+    document.getElementById('tVol').textContent = sd.volatility != null ? `${fmt(sd.volatility, 1)}%` : '—';
+
+    // Drawdown
+    document.getElementById('tDrawdown').textContent = sd.max_drawdown != null ? `-${fmt(sd.max_drawdown, 1)}%` : '—';
+
+    // Relative perf
+    const rpEl = document.getElementById('tRelPerf');
+    if (sd.relative_perf != null) {
+      const rp = sd.relative_perf;
+      rpEl.innerHTML = `<span class="${rp>=0?'text-success':'text-danger'}">${rp>=0?'+':''}${fmt(rp,2)}% vs MASI</span>`;
+    } else { rpEl.textContent = '—'; }
+
+    document.getElementById('techCard').style.display = '';
+  } else {
+    document.getElementById('techCard').style.display = 'none';
+  }
+
+  // ── Analysis — render full markdown properly ──────────────────────────────
   const container = document.getElementById('analysisContainer');
   container.innerHTML = '';
   const div = document.createElement('div');
